@@ -31,7 +31,10 @@ func TestRouter_WiresHealthzAndVersion(t *testing.T) {
 			if resp.StatusCode != http.StatusOK {
 				t.Fatalf("status: got %d", resp.StatusCode)
 			}
-			body, _ := io.ReadAll(resp.Body)
+			body, err := io.ReadAll(resp.Body)
+			if err != nil {
+				t.Fatal(err)
+			}
 			if string(body) != c.wantBody {
 				t.Fatalf("body: got %q, want %q", string(body), c.wantBody)
 			}
