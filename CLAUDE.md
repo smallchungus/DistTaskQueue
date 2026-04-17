@@ -1,0 +1,89 @@
+# DistTaskQueue — Project Rules
+
+Global rules in `~/.claude/CLAUDE.md` still apply. This file adds project-specific rules and reinforces the ones that matter most here.
+
+## Read first
+
+- Design spec: `docs/superpowers/specs/2026-04-17-distributed-task-queue-design.md`
+- Implementation plan(s): `docs/superpowers/plans/` (created when work starts)
+- Don't deviate from the spec without flagging it. If the spec is wrong, fix the spec first, then the code.
+
+## TDD is non-negotiable
+
+- Tests come before implementation. Red → green → refactor. Use the `superpowers:test-driven-development` skill.
+- If a test is hard to write, the unit boundary is wrong. Split before adding more code.
+- Integration tests use real Redis and real Postgres via `testcontainers-go`. Do NOT mock SQL drivers or `go-redis`. Mocks here have caused outages elsewhere; we're not repeating that.
+- Mock only at outbound HTTP boundaries: Gmail API, Drive API, Gotenberg. Use `httptest.Server` with canned responses, not interface mocks.
+
+## Tests: same quality bar as production code
+
+Tests are read more than they're written. Slop in tests is worse than slop in code because it's the first thing a reviewer sees.
+
+- **No "this test verifies that..." comments.** The test name says it. If the name doesn't, rename the test.
+- **Test names: short, declarative.** `TestSweeper_RequeuesOrphanedJob`. Not `TestSweeper_ShouldEventuallyRequeueAnOrphanedJobAfterTheHeartbeatHasTimedOut`.
+- **One behavior per test.** Don't pile assertions across unrelated concerns.
+- **Table-driven when there are 3+ similar cases.** Otherwise plain `t.Run` subtests.
+- **No `assert.True(t, x == y)`.** Use `assert.Equal` / `cmp.Diff`. Failure messages matter.
+- **No setup ceremonies.** If `setupTest` is 40 lines, the unit is too big. Test helpers OK, sprawl not.
+- **No leftover `t.Log` / `fmt.Println` from debugging.** Delete before committing.
+
+## Code
+
+- Default to no comments. The global rule applies. Project reinforcement: especially in worker loops and queue logic, prefer self-explanatory names over a comment trying to rescue a bad name.
+- One short line max for any comment. No multi-paragraph docstrings on Go functions. The function signature plus a 5-word doc comment (when exported) is enough.
+- No clever one-liners. Boring, readable Go wins. If you reach for `chan struct{}{}` patterns to look smart, you're doing it wrong.
+- Minimal diffs. No drive-by refactors. If you spot something unrelated, mention it in the chat or open a follow-up — don't bundle it.
+- No defensive nil checks for values that internal code guarantees aren't nil. Validate at the system boundary (HTTP handler, Gmail/Drive response parsing) and trust internals.
+
+## Library choices (the hand-rolled-on-purpose project)
+
+The point of this project is to demonstrate knowing the internals. Don't pull in libraries that hide them.
+
+- **Don't use:** Asynq, Machinery, River, go-workers, gocraft/work, or any other queue library. The whole point is writing the queue ourselves on raw Redis.
+- **Don't use:** Gin, Echo, Fiber, or any heavyweight web framework. `net/http` is enough; add `chi` if routing gets messy.
+- **Don't use:** GORM, ent, sqlboiler, or any ORM. Hand-write SQL with `pgx`. Migrations via `golang-migrate`.
+- **Don't use:** OpenTelemetry, Datadog SDK, or any heavy observability stack in v1. `log/slog` with JSON handler. Prometheus client only for the queue-depth metric the HPA needs.
+- **Use:** `pgx/v5`, `go-redis/v9`, `chi` (only if needed), `slog`, `golang-migrate`, `testcontainers-go`. That's it for the core.
+
+## Layout
+
+Standard Go layout, no surprises.
+
+```
+cmd/
+  api/         # HTTP API + dashboard
+  scheduler/   # Gmail History poller
+  worker/      # Single binary, --stage flag selects fetch/render/upload
+  sweeper/     # Heartbeat sweeper
+internal/
+  queue/       # Redis queue ops (LPUSH/BLPOP/sweep)
+  store/       # Postgres access (pipeline_jobs, history, oauth, processed_emails)
+  pipeline/    # Job model + stage logic
+  gmail/       # Gmail client + History sync
+  drive/       # Drive client + folder cache + uploader
+  pdf/         # Gotenberg client
+  oauth/       # Token storage + AES-GCM
+  dashboard/   # SSE feed + demo triggers
+  testutil/    # testcontainers helpers (one place; not duplicated per package)
+deploy/k8s/    # k3s manifests
+.github/workflows/
+docs/superpowers/
+```
+
+Worker is one binary with a `--stage` flag because the three stages share heartbeat + claim + retry plumbing. Same image, three deployments.
+
+## Output / chat / commits
+
+Global rules cover most of this. Project additions:
+
+- When reporting test results, paste the actual output — don't paraphrase. "All tests pass" is not evidence; `ok internal/queue 0.412s` is.
+- Don't claim k3s deploys work without `kubectl get pods` output showing it.
+- Commit subjects use prefixes: `queue:`, `worker:`, `api:`, `sweeper:`, `gmail:`, `drive:`, `k8s:`, `ci:`, `docs:`, `test:`. Keeps `git log` scannable.
+
+## What I do NOT want, ever
+
+- Tests written after the code "just to have coverage."
+- "Helpful" wrappers around `pgx` or `go-redis` that re-invent half the library.
+- Generated boilerplate (sqlc, protobuf, etc.) without explicit ask.
+- AI prose in PR descriptions or commit bodies.
+- Emoji status lines, "✓ complete!" output, summaries dressed up with tables when prose would do.
