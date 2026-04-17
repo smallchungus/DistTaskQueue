@@ -34,4 +34,7 @@ func TestVersion_ReturnsConfiguredVersion(t *testing.T) {
 	if got := rec.Body.String(); got != want {
 		t.Fatalf("body: got %q, want %q", got, want)
 	}
+	if ct := rec.Header().Get("Content-Type"); ct != "application/json" {
+		t.Fatalf("Content-Type: got %q, want %q", ct, "application/json")
+	}
 }
