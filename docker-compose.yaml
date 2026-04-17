@@ -1,0 +1,48 @@
+services:
+  postgres:
+    image: postgres:16-alpine
+    environment:
+      POSTGRES_DB: dtq
+      POSTGRES_USER: dtq
+      POSTGRES_PASSWORD: dtq
+    ports:
+      - "5432:5432"
+    volumes:
+      - pg-data:/var/lib/postgresql/data
+    healthcheck:
+      test: ["CMD-SHELL", "pg_isready -U dtq"]
+      interval: 2s
+      timeout: 2s
+      retries: 10
+
+  redis:
+    image: redis:7-alpine
+    ports:
+      - "6379:6379"
+    volumes:
+      - redis-data:/data
+    healthcheck:
+      test: ["CMD", "redis-cli", "ping"]
+      interval: 2s
+      timeout: 2s
+      retries: 10
+
+  api:
+    build:
+      context: .
+      args:
+        VERSION: dev
+        COMMIT: local
+    environment:
+      API_ADDR: ":8080"
+      DATABASE_URL: "postgres://dtq:dtq@postgres:5432/dtq?sslmode=disable"
+      REDIS_URL: "redis://redis:6379/0"
+    ports:
+      - "8080:8080"
+    depends_on:
+      postgres: { condition: service_healthy }
+      redis: { condition: service_healthy }
+
+volumes:
+  pg-data:
+  redis-data:
