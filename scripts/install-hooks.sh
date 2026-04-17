@@ -9,7 +9,7 @@ mkdir -p "$hooks_dir"
 for hook in pre-commit pre-push; do
   src="scripts/hooks/$hook"
   dst="$hooks_dir/$hook"
-  ln -sf "../../$src" "$dst"
+  ln -sf "$(pwd)/$src" "$dst"
   chmod +x "$src"
   echo "installed: $dst -> $src"
 done
