@@ -1,0 +1,16 @@
+.git
+.github
+.gitignore
+.golangci.yml
+.superpowers
+.vscode
+.idea
+bin
+coverage.out
+coverage.html
+deploy
+docs
+README.md
+Makefile
+*.md
+docker-compose.yaml
