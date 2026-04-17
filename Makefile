@@ -1,4 +1,4 @@
-.PHONY: help test test-unit test-integration lint build run docker docker-up docker-down k8s-validate
+.PHONY: help test test-unit test-integration lint build run docker docker-up docker-down k8s-validate install-hooks
 
 help:
 	@grep -E '^[a-zA-Z0-9_-]+:.*?## ' Makefile | awk 'BEGIN{FS=":.*?## "}{printf "  %-20s %s\n", $$1, $$2}'
@@ -13,6 +13,9 @@ test-integration: ## Run integration tests (requires Docker)
 
 lint: ## Run golangci-lint
 	golangci-lint run ./...
+
+install-hooks: ## Install git pre-commit and pre-push hooks
+	./scripts/install-hooks.sh
 
 build: ## Build the api binary
 	CGO_ENABLED=0 go build -o bin/api ./cmd/api

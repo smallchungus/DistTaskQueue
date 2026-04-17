@@ -1,0 +1,15 @@
+#!/usr/bin/env bash
+set -euo pipefail
+
+cd "$(git rev-parse --show-toplevel)"
+
+unformatted=$(gofmt -l . 2>/dev/null | grep -v '^vendor/' || true)
+if [ -n "$unformatted" ]; then
+  echo "pre-commit: gofmt issues in:" >&2
+  echo "$unformatted" >&2
+  echo "run: gofmt -w ." >&2
+  exit 1
+fi
+
+go vet ./...
+go test -short -count=1 ./...
