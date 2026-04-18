@@ -198,6 +198,35 @@ func TestListReadyRetryJobs_ReturnsQueuedWithLastErrorAndDueNextRun(t *testing.T
 	_, _ = j2, j3
 }
 
+func TestCreateUser_PersistsRow(t *testing.T) {
+	s := newStore(t)
+	ctx := context.Background()
+
+	u, err := s.CreateUser(ctx, "test@example.com")
+	if err != nil {
+		t.Fatalf("create: %v", err)
+	}
+	if u.ID.String() == "" || u.Email != "test@example.com" {
+		t.Fatalf("user: %+v", u)
+	}
+
+	got, err := s.GetUserByEmail(ctx, "test@example.com")
+	if err != nil {
+		t.Fatalf("get: %v", err)
+	}
+	if got.ID != u.ID {
+		t.Fatalf("id mismatch: %s vs %s", got.ID, u.ID)
+	}
+}
+
+func TestGetUserByEmail_ReturnsErrUserNotFound(t *testing.T) {
+	s := newStore(t)
+	_, err := s.GetUserByEmail(context.Background(), "nobody@example.com")
+	if !errors.Is(err, store.ErrUserNotFound) {
+		t.Fatalf("got %v, want ErrUserNotFound", err)
+	}
+}
+
 func jobIDs(js []store.Job) []string {
 	out := make([]string, len(js))
 	for i, j := range js {
