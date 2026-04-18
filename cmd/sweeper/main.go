@@ -5,6 +5,7 @@ import (
 	"log/slog"
 	"os"
 	"os/signal"
+	"strconv"
 	"syscall"
 	"time"
 
@@ -46,10 +47,18 @@ func main() {
 	redis := goredis.NewClient(opts)
 	defer func() { _ = redis.Close() }()
 
+	staleThresholdSec := 60
+	if v := os.Getenv("STALE_QUEUED_THRESHOLD_SEC"); v != "" {
+		if n, err := strconv.Atoi(v); err == nil && n > 0 {
+			staleThresholdSec = n
+		}
+	}
+
 	sw := sweeper.New(sweeper.Config{
-		Store:    store.New(pool),
-		Queue:    queue.New(redis),
-		Interval: 5 * time.Second,
+		Store:          store.New(pool),
+		Queue:          queue.New(redis),
+		Interval:       5 * time.Second,
+		StaleThreshold: time.Duration(staleThresholdSec) * time.Second,
 	})
 
 	slog.Info("sweeper starting")
