@@ -9,12 +9,12 @@ import (
 )
 
 type Handler interface {
-	Process(ctx context.Context, job store.Job) error
+	Process(ctx context.Context, job store.Job) (nextStage string, err error)
 }
 
 type NoopHandler struct{}
 
-func (NoopHandler) Process(ctx context.Context, job store.Job) error {
+func (NoopHandler) Process(ctx context.Context, job store.Job) (string, error) {
 	var p struct {
 		SleepMs int `json:"sleepMs"`
 	}
@@ -22,12 +22,12 @@ func (NoopHandler) Process(ctx context.Context, job store.Job) error {
 		_ = json.Unmarshal(job.Payload, &p)
 	}
 	if p.SleepMs <= 0 {
-		return nil
+		return "", nil
 	}
 	select {
 	case <-ctx.Done():
-		return ctx.Err()
+		return "", ctx.Err()
 	case <-time.After(time.Duration(p.SleepMs) * time.Millisecond):
-		return nil
+		return "", nil
 	}
 }

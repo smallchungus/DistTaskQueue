@@ -30,15 +30,17 @@ func (s *Store) EnqueueJob(ctx context.Context, nj NewJob) (Job, error) {
 	}
 
 	const q = `
-		INSERT INTO pipeline_jobs (id, stage, status, payload)
-		VALUES ($1, $2, $3, $4)
-		RETURNING id, stage, status, payload, worker_id, attempts, max_attempts,
-		          last_error, next_run_at, claimed_at, completed_at, created_at, updated_at`
+		INSERT INTO pipeline_jobs (id, user_id, gmail_message_id, stage, status, payload, is_synthetic)
+		VALUES ($1, $2, $3, $4, $5, $6, $7)
+		RETURNING id, user_id, gmail_message_id, stage, status, payload, is_synthetic,
+		          worker_id, attempts, max_attempts, last_error, next_run_at,
+		          claimed_at, completed_at, created_at, updated_at`
 
-	row := s.pool.QueryRow(ctx, q, id, nj.Stage, StatusQueued, payload)
+	row := s.pool.QueryRow(ctx, q, id, nj.UserID, nj.GmailMessageID, nj.Stage, StatusQueued, payload, nj.IsSynthetic)
 	var j Job
-	if err := row.Scan(&j.ID, &j.Stage, &j.Status, &j.Payload, &j.WorkerID, &j.Attempts,
-		&j.MaxAttempts, &j.LastError, &j.NextRunAt, &j.ClaimedAt, &j.CompletedAt, &j.CreatedAt, &j.UpdatedAt); err != nil {
+	if err := row.Scan(&j.ID, &j.UserID, &j.GmailMessageID, &j.Stage, &j.Status, &j.Payload, &j.IsSynthetic,
+		&j.WorkerID, &j.Attempts, &j.MaxAttempts, &j.LastError, &j.NextRunAt,
+		&j.ClaimedAt, &j.CompletedAt, &j.CreatedAt, &j.UpdatedAt); err != nil {
 		return Job{}, fmt.Errorf("enqueue: %w", err)
 	}
 	return j, nil
@@ -103,8 +105,9 @@ func (s *Store) MarkFailed(ctx context.Context, id uuid.UUID, errMsg string, nex
 
 func (s *Store) ListRunningJobs(ctx context.Context) ([]Job, error) {
 	const q = `
-		SELECT id, stage, status, payload, worker_id, attempts, max_attempts,
-		       last_error, next_run_at, claimed_at, completed_at, created_at, updated_at
+		SELECT id, user_id, gmail_message_id, stage, status, payload, is_synthetic,
+		       worker_id, attempts, max_attempts, last_error, next_run_at,
+		       claimed_at, completed_at, created_at, updated_at
 		FROM pipeline_jobs WHERE status = $1`
 	rows, err := s.pool.Query(ctx, q, StatusRunning)
 	if err != nil {
@@ -116,8 +119,9 @@ func (s *Store) ListRunningJobs(ctx context.Context) ([]Job, error) {
 
 func (s *Store) ListReadyRetryJobs(ctx context.Context) ([]Job, error) {
 	const q = `
-		SELECT id, stage, status, payload, worker_id, attempts, max_attempts,
-		       last_error, next_run_at, claimed_at, completed_at, created_at, updated_at
+		SELECT id, user_id, gmail_message_id, stage, status, payload, is_synthetic,
+		       worker_id, attempts, max_attempts, last_error, next_run_at,
+		       claimed_at, completed_at, created_at, updated_at
 		FROM pipeline_jobs
 		WHERE status = $1 AND last_error IS NOT NULL AND next_run_at <= now()`
 	rows, err := s.pool.Query(ctx, q, StatusQueued)
@@ -132,8 +136,9 @@ func scanJobs(rows pgx.Rows) ([]Job, error) {
 	var out []Job
 	for rows.Next() {
 		var j Job
-		if err := rows.Scan(&j.ID, &j.Stage, &j.Status, &j.Payload, &j.WorkerID, &j.Attempts,
-			&j.MaxAttempts, &j.LastError, &j.NextRunAt, &j.ClaimedAt, &j.CompletedAt, &j.CreatedAt, &j.UpdatedAt); err != nil {
+		if err := rows.Scan(&j.ID, &j.UserID, &j.GmailMessageID, &j.Stage, &j.Status, &j.Payload, &j.IsSynthetic,
+			&j.WorkerID, &j.Attempts, &j.MaxAttempts, &j.LastError, &j.NextRunAt,
+			&j.ClaimedAt, &j.CompletedAt, &j.CreatedAt, &j.UpdatedAt); err != nil {
 			return nil, fmt.Errorf("scan: %w", err)
 		}
 		out = append(out, j)
@@ -144,16 +149,34 @@ func scanJobs(rows pgx.Rows) ([]Job, error) {
 	return out, nil
 }
 
+func (s *Store) AdvanceJob(ctx context.Context, id uuid.UUID, nextStage string) error {
+	const q = `
+		UPDATE pipeline_jobs
+		SET stage = $1, status = $2, worker_id = NULL, claimed_at = NULL, updated_at = now()
+		WHERE id = $3 AND status = $4`
+
+	tag, err := s.pool.Exec(ctx, q, nextStage, StatusQueued, id, StatusRunning)
+	if err != nil {
+		return fmt.Errorf("advance: %w", err)
+	}
+	if tag.RowsAffected() == 0 {
+		return ErrJobNotFound
+	}
+	return nil
+}
+
 func (s *Store) GetJob(ctx context.Context, id uuid.UUID) (Job, error) {
 	const q = `
-		SELECT id, stage, status, payload, worker_id, attempts, max_attempts,
-		       last_error, next_run_at, claimed_at, completed_at, created_at, updated_at
+		SELECT id, user_id, gmail_message_id, stage, status, payload, is_synthetic,
+		       worker_id, attempts, max_attempts, last_error, next_run_at,
+		       claimed_at, completed_at, created_at, updated_at
 		FROM pipeline_jobs WHERE id = $1`
 
 	row := s.pool.QueryRow(ctx, q, id)
 	var j Job
-	err := row.Scan(&j.ID, &j.Stage, &j.Status, &j.Payload, &j.WorkerID, &j.Attempts,
-		&j.MaxAttempts, &j.LastError, &j.NextRunAt, &j.ClaimedAt, &j.CompletedAt, &j.CreatedAt, &j.UpdatedAt)
+	err := row.Scan(&j.ID, &j.UserID, &j.GmailMessageID, &j.Stage, &j.Status, &j.Payload, &j.IsSynthetic,
+		&j.WorkerID, &j.Attempts, &j.MaxAttempts, &j.LastError, &j.NextRunAt,
+		&j.ClaimedAt, &j.CompletedAt, &j.CreatedAt, &j.UpdatedAt)
 	if errors.Is(err, pgx.ErrNoRows) {
 		return Job{}, ErrJobNotFound
 	}

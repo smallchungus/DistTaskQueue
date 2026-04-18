@@ -80,13 +80,40 @@ func TestProcessOne_ReturnsNoWorkOnEmptyQueue(t *testing.T) {
 
 type errHandler struct{}
 
-func (errHandler) Process(ctx context.Context, job store.Job) error {
-	return &handlerErr{"boom"}
+func (errHandler) Process(ctx context.Context, job store.Job) (string, error) {
+	return "", &handlerErr{"boom"}
 }
 
 type handlerErr struct{ msg string }
 
 func (e *handlerErr) Error() string { return e.msg }
+
+type advancingHandler struct{ next string }
+
+func (h advancingHandler) Process(ctx context.Context, job store.Job) (string, error) {
+	return h.next, nil
+}
+
+func setupHarnessWithStage(t *testing.T, h worker.Handler, stage string) *harness {
+	t.Helper()
+	pool := testutil.StartPostgres(t)
+	if err := store.Migrate(context.Background(), pool.Config().ConnString()); err != nil {
+		t.Fatal(err)
+	}
+	s := store.New(pool)
+	q := queue.New(testutil.StartRedis(t))
+	w := worker.New(worker.Config{
+		Stage:             stage,
+		WorkerID:          "worker-test-1",
+		Store:             s,
+		Queue:             q,
+		Handler:           h,
+		PopTimeout:        500 * time.Millisecond,
+		HeartbeatTTL:      5 * time.Second,
+		HeartbeatInterval: 1 * time.Second,
+	})
+	return &harness{store: s, queue: q, w: w}
+}
 
 func TestProcessOne_MarksFailedOnHandlerError(t *testing.T) {
 	h := setupHarness(t, errHandler{})
@@ -112,5 +139,33 @@ func TestProcessOne_MarksFailedOnHandlerError(t *testing.T) {
 	}
 	if got.LastError == nil || *got.LastError != "boom" {
 		t.Fatalf("last_error: %v", got.LastError)
+	}
+}
+
+func TestProcessOne_AdvancesToNextStage(t *testing.T) {
+	h := setupHarnessWithStage(t, advancingHandler{next: "render"}, "fetch")
+	ctx := context.Background()
+	job, _ := h.store.EnqueueJob(ctx, store.NewJob{Stage: "fetch"})
+	_ = h.queue.Push(ctx, "fetch", job.ID.String())
+
+	didWork, err := h.w.ProcessOne(ctx)
+	if err != nil {
+		t.Fatalf("ProcessOne: %v", err)
+	}
+	if !didWork {
+		t.Fatal("expected didWork=true")
+	}
+
+	got, _ := h.store.GetJob(ctx, job.ID)
+	if got.Stage != "render" || got.Status != store.StatusQueued {
+		t.Fatalf("stage/status: %s/%s, want render/queued", got.Stage, got.Status)
+	}
+
+	popped, err := h.queue.BlockingPop(ctx, "render", 500*time.Millisecond)
+	if err != nil {
+		t.Fatalf("expected pushed to render: %v", err)
+	}
+	if popped != job.ID.String() {
+		t.Fatalf("popped %q, want %q", popped, job.ID.String())
 	}
 }
