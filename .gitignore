@@ -12,14 +12,19 @@ vendor/
 coverage.out
 coverage.html
 
-# IDE
+# IDE / OS
 .vscode/
 .idea/
+*.iml
+.settings/
+.project
 *.swp
 *.swo
 .DS_Store
+Thumbs.db
+desktop.ini
 
-# Env / secrets
+# Env / secrets — NEVER track these
 .env
 .env.*
 !.env.example
@@ -27,10 +32,22 @@ coverage.html
 kubeconfig
 kubeconfig.yaml
 secrets/
+*.pem
+*.key
+*.crt
+*.p12
+*.pfx
+credentials.json
+client_secret*.json
+service-account*.json
 
 # Local data (worker volume, dev DB dumps)
 /data/
 /tmp/
+*.log
+*.log.*
+dump.rdb
+appendonly.aof
 
 # Brainstorming companion
 .superpowers/

@@ -31,9 +31,26 @@ Tests are read more than they're written. Slop in tests is worse than slop in co
 
 - Default to no comments. The global rule applies. Project reinforcement: especially in worker loops and queue logic, prefer self-explanatory names over a comment trying to rescue a bad name.
 - One short line max for any comment. No multi-paragraph docstrings on Go functions. The function signature plus a 5-word doc comment (when exported) is enough.
+- **Code can be verbose where clarity demands it. Comments cannot.** If a function needs 40 lines to be correct, that's fine. If it needs 10 lines of comments to be understood, rewrite it.
 - No clever one-liners. Boring, readable Go wins. If you reach for `chan struct{}{}` patterns to look smart, you're doing it wrong.
 - Minimal diffs. No drive-by refactors. If you spot something unrelated, mention it in the chat or open a follow-up — don't bundle it.
 - No defensive nil checks for values that internal code guarantees aren't nil. Validate at the system boundary (HTTP handler, Gmail/Drive response parsing) and trust internals.
+
+## Config and secrets (12-factor)
+
+- **Everything via env vars or flags.** No hardcoded endpoints, no hardcoded timeouts, no hardcoded "dev mode on". If it might ever need to differ between local dev, staging, and prod, it's a config knob. Examples already in this repo: `DATABASE_URL`, `REDIS_URL`, `GOTENBERG_URL`, `DRIVE_ROOT_FOLDER_ID`, `DATA_DIR`, `API_ADDR`, `GOOGLE_OAUTH_CLIENT_ID`, `GOOGLE_OAUTH_CLIENT_SECRET`, `TOKEN_ENCRYPTION_KEY`.
+- **`.env.example` is the canonical config template.** It must list every env var the binaries read, with placeholder values. Update it whenever a new var is added.
+- **`.env` is gitignored.** Never commit real values. Never. The `.gitignore` has explicit patterns for `.env`, `.env.*`, `*.pem`, `*.key`, `*.crt`, `credentials.json`, `client_secret*.json`, `service-account*.json`, `secrets/`, `*.kubeconfig`. Add new patterns when new secret shapes appear.
+- **Secrets in prod come from the platform's secret store** (k8s Secret, Fly secrets, AWS Secrets Manager). Not from `.env` files in containers. `.env` is a dev-only convenience.
+- **Fail fast on missing config.** Binaries should `os.Exit(1)` at startup with a clear `missing env var: FOO` message if a required env var isn't set. Don't pretend it's optional and fail mysteriously later.
+- **Sensible defaults for optional config.** Timeouts, intervals, pool sizes — env var overrides a hardcoded sane default. `envOr("GOTENBERG_URL", "http://gotenberg:3000")` is the pattern.
+
+## Maintainability
+
+- **Small files, focused packages.** If an `internal/<pkg>/<file>.go` grows past ~300 lines, consider splitting. Each file should be readable in one scroll.
+- **Package boundaries reflect domains, not tech layers.** We have `internal/gmail`, `internal/drive`, `internal/pdf`, `internal/store`, `internal/queue`, `internal/oauth`. We do NOT have `internal/models`, `internal/services`, `internal/utils`.
+- **Cross-package state crosses boundaries through typed APIs, not global vars.** No init-time mutations of package-level state. Construction happens in `main.go` / `cmd/*`; internals take dependencies via `Config` structs.
+- **Hand-written SQL in `internal/store`.** No ORM, no reflection magic. See the existing `EnqueueJob` / `GetJob` pattern.
 
 ## Library choices (the hand-rolled-on-purpose project)
 
@@ -87,3 +104,6 @@ Global rules cover most of this. Project additions:
 - Generated boilerplate (sqlc, protobuf, etc.) without explicit ask.
 - AI prose in PR descriptions or commit bodies.
 - Emoji status lines, "✓ complete!" output, summaries dressed up with tables when prose would do.
+- **Real secrets in `.env.example`** or anywhere in the repo. Placeholders only.
+- **Hardcoded URLs or credentials** anywhere. Even for "just testing" — tests set env vars if they need them.
+- **Global singletons** instead of Config-based construction. Every unit takes its dependencies as a parameter.
