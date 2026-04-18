@@ -54,7 +54,7 @@ func (h *FetchHandler) Process(ctx context.Context, job store.Job) (string, erro
 	}
 
 	dir := filepath.Join(h.cfg.DataDir, "mime")
-	if err := os.MkdirAll(dir, 0o755); err != nil {
+	if err := os.MkdirAll(dir, 0o750); err != nil {
 		return "", fmt.Errorf("mkdir: %w", err)
 	}
 	path := filepath.Join(dir, job.ID.String()+".eml")
