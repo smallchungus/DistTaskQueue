@@ -6,7 +6,7 @@ A distributed task queue in Go (Redis + Postgres + Kubernetes), built to power a
 
 ## Status
 
-Phase 1 (walking skeleton) — repo bootstrap, HTTP API with health and version endpoints, full test infrastructure, CI, k8s manifests authored. Queue logic, Gmail/Drive workers, dashboard, and live deployment ship in later phases. See `docs/superpowers/plans/`.
+Phase 2 complete — queue core ships end-to-end. Postgres-backed durable state (`pipeline_jobs`, `job_status_history`), Redis-backed per-stage queues, worker binary with claim + heartbeat + exponential-backoff retries, sweeper with orphan revival and delayed-retry promotion. Gmail/Drive workers and live deployment ship in later phases. See `docs/superpowers/plans/`.
 
 ## Quickstart (local)
 
@@ -34,6 +34,28 @@ make lint              # golangci-lint
 ```
 
 Integration tests use real Redis and real Postgres via [testcontainers-go](https://golang.testcontainers.org/) — never mocks. Mocking the queue and storage layers is how subtle bugs (race conditions, ordering, atomicity) escape into production.
+
+## Reproducing the resume numbers
+
+The resume claim "5K jobs across 4 workers in ~10 seconds" is reproducible:
+
+```bash
+make loadtest
+```
+
+This spins up real Postgres + Redis containers via testcontainers-go, enqueues 5000 no-op jobs into the Redis queue, runs 4 workers in parallel, and reports wall-clock time. Asserts under 15 s; on a modern dev laptop typically 2–5 s. Latest local run: **5000 jobs / 4 workers in 2.04 s (2,454 jobs/s).**
+
+What's actually exercised, per job × 5000:
+
+- `pipeline_jobs` row inserted (`store.EnqueueJob`)
+- `LPUSH` onto the Redis stage list (`queue.Push`)
+- `BRPOP` per worker (`queue.BlockingPop`)
+- Atomic claim via Postgres `UPDATE … RETURNING` (`store.ClaimJob`)
+- Heartbeat goroutine writing `SET heartbeat:<id> EX 1s` while processing
+- `MarkDone` → `UPDATE … status='done', completed_at=now()`
+- Polling loop until `count(status=done) == 5000`
+
+Workers are goroutines in the same OS process. The atomic primitives work identically to a multi-process deployment because contention happens at Postgres and Redis, not in Go memory. A multi-process containerized version ships in Phase 1.5.
 
 ## Git hooks
 

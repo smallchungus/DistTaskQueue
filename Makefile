@@ -1,4 +1,4 @@
-.PHONY: help test test-unit test-integration lint build run docker docker-up docker-down k8s-validate install-hooks
+.PHONY: help test test-unit test-integration loadtest lint build run docker docker-up docker-down k8s-validate install-hooks
 
 help:
 	@grep -E '^[a-zA-Z0-9_-]+:.*?## ' Makefile | awk 'BEGIN{FS=":.*?## "}{printf "  %-20s %s\n", $$1, $$2}'
@@ -10,6 +10,9 @@ test-unit: ## Run unit tests with race detector
 
 test-integration: ## Run integration tests (requires Docker)
 	go test -race -count=1 -tags=integration ./...
+
+loadtest: ## Run end-to-end load test (5K jobs / 4 workers / <15s, requires Docker)
+	go test -tags=loadtest -v -timeout=2m ./internal/loadtest/...
 
 lint: ## Run golangci-lint
 	$$(command -v golangci-lint || echo $$(go env GOPATH)/bin/golangci-lint) run ./...
