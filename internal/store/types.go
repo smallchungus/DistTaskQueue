@@ -17,24 +17,30 @@ const (
 )
 
 type Job struct {
-	ID          uuid.UUID
-	Stage       string
-	Status      JobStatus
-	Payload     json.RawMessage
-	WorkerID    *string
-	Attempts    int
-	MaxAttempts int
-	LastError   *string
-	NextRunAt   time.Time
-	ClaimedAt   *time.Time
-	CompletedAt *time.Time
-	CreatedAt   time.Time
-	UpdatedAt   time.Time
+	ID             uuid.UUID
+	UserID         *uuid.UUID
+	GmailMessageID *string
+	Stage          string
+	Status         JobStatus
+	Payload        json.RawMessage
+	IsSynthetic    bool
+	WorkerID       *string
+	Attempts       int
+	MaxAttempts    int
+	LastError      *string
+	NextRunAt      time.Time
+	ClaimedAt      *time.Time
+	CompletedAt    *time.Time
+	CreatedAt      time.Time
+	UpdatedAt      time.Time
 }
 
 type NewJob struct {
-	Stage   string
-	Payload json.RawMessage
+	Stage          string
+	Payload        json.RawMessage
+	UserID         *uuid.UUID
+	GmailMessageID *string
+	IsSynthetic    bool
 }
 
 type User struct {
