@@ -20,6 +20,7 @@ What runs where, in the default deployment:
 | Gotenberg | `gotenberg/gotenberg:8` | 1 | `GET /health` |
 | Postgres | `postgres:16-alpine` StatefulSet | 1 | `pg_isready` |
 | Redis | `redis:7-alpine` StatefulSet | 1 | `redis-cli ping` |
+| Ingress | `api` (networking.k8s.io/v1) routed through Traefik | — | `GET /healthz` via public IP |
 | Cloudflare Tunnel | `cloudflared` on droplet (or as a Deployment) | 1 | tunnel connection count |
 
 Every container-app pod pulls from GHCR. The `dtq-secrets` Kubernetes Secret holds `POSTGRES_PASSWORD`, `TOKEN_ENCRYPTION_KEY`, `GOOGLE_OAUTH_CLIENT_ID`, `GOOGLE_OAUTH_CLIENT_SECRET`.
@@ -81,91 +82,116 @@ Flags: `--email=wchen1396@gmail.com` — required, must match the Google account
 
 ## 3. Runbook — swap cloud providers
 
-Time: ~15 min, assuming the new cluster is up.
+Time: ~20 min end-to-end. Order matters; skipping steps is what cost us an hour on the DO bring-up.
 
-### 3.1 On the new host (Hetzner, DO, Linode, …)
+### 3.1 Provision the new host
 
 ```bash
-# 1. Create a VM (2+ GB RAM, 1+ vCPU, 30+ GB disk). Ubuntu 24.04.
-#    Attach your SSH key at provision time.
-
-# 2. Install k3s:
+# 2+ GB RAM, 1+ vCPU, 30+ GB disk, Ubuntu 24.04. Attach your SSH key at provision.
 ssh root@<NEW_IP>
 curl -sfL https://get.k3s.io | sh -
-# Wait for node Ready:
-kubectl get nodes
+kubectl get nodes   # wait until Ready
 
-# 3. Copy kubeconfig to your laptop with the right server address:
+# Copy kubeconfig to laptop, rewriting the server address:
 ssh root@<NEW_IP> "cat /etc/rancher/k3s/k3s.yaml" \
   | sed "s|https://127.0.0.1:6443|https://<NEW_IP>:6443|" \
   > ~/.kube/dtq-new-config
 chmod 600 ~/.kube/dtq-new-config
+export KUBECONFIG=~/.kube/dtq-new-config
 ```
 
-### 3.2 From your laptop
+k3s ships with Traefik as the default `LoadBalancer` on :80. `deploy/k8s/27-ingress.yaml` wires `/` → `api:80` through it — no extra tunnel needed for the initial smoke test.
+
+### 3.2 Create Secrets BEFORE applying manifests
+
+The order is load-bearing: if postgres starts before `dtq-secrets` exists, the `POSTGRES_PASSWORD` env resolves to empty and postgres initializes `initdb` with whatever is there. Later creating the Secret does *not* re-initialize the DB, and auth fails with "password authentication failed" on every worker pod. Fix for that case is in §3.6 but it's avoidable by doing Secrets first.
 
 ```bash
-export KUBECONFIG=~/.kube/dtq-new-config
+kubectl apply -f deploy/k8s/00-namespace.yaml
 
-# Namespace + config (non-secret):
-kubectl apply -f deploy/k8s/00-namespace.yaml -f deploy/k8s/01-config.yaml
-
-# Image pull secret for private GHCR image:
+# Image pull secret for the private GHCR image:
 kubectl -n disttaskqueue create secret docker-registry ghcr-pull \
   --docker-server=ghcr.io \
   --docker-username=smallchungus \
   --docker-password="$(gh auth token)" \
   --docker-email=wchen1396@gmail.com
 
-# Application secrets. PRESERVE TOKEN_ENCRYPTION_KEY from the previous cluster
-# (kubectl -n disttaskqueue get secret dtq-secrets -o yaml on the OLD cluster,
-# base64-decode, re-use here). Without it, existing oauth_tokens rows become
-# unreadable and users must re-run oauth-setup.
-kubectl -n disttaskqueue create secret generic dtq-secrets \
-  --from-literal=POSTGRES_PASSWORD="$(openssl rand -base64 24)" \
-  --from-literal=TOKEN_ENCRYPTION_KEY="<PREVIOUS_KEY>" \
-  --from-literal=GOOGLE_OAUTH_CLIENT_ID="<real-client-id>" \
-  --from-literal=GOOGLE_OAUTH_CLIENT_SECRET="<real-client-secret>"
+# Application secrets. PRESERVE TOKEN_ENCRYPTION_KEY from the old cluster —
+# without it, the encrypted oauth_tokens rows you're about to copy in are
+# unreadable and every user has to re-run oauth-setup.
+OLD_KEY=$(KUBECONFIG=~/.kube/dtq-old kubectl -n disttaskqueue \
+  get secret dtq-secrets -o jsonpath='{.data.TOKEN_ENCRYPTION_KEY}' | base64 -d)
 
-# Everything else:
+kubectl -n disttaskqueue create secret generic dtq-secrets \
+  --from-literal=POSTGRES_PASSWORD='dtq' \
+  --from-literal=TOKEN_ENCRYPTION_KEY="$OLD_KEY" \
+  --from-literal=GOOGLE_OAUTH_CLIENT_ID='<real-client-id>' \
+  --from-literal=GOOGLE_OAUTH_CLIENT_SECRET='<real-client-secret>'
+```
+
+Keep `POSTGRES_PASSWORD=dtq` unless you also edit `01-config.yaml` to match — `DATABASE_URL` has `dtq:dtq` embedded. Rotating the password is a two-place change; don't half-do it.
+
+### 3.3 Apply the rest of the manifests
+
+```bash
 kubectl apply -f deploy/k8s/
 
-# Wait for pods:
-kubectl -n disttaskqueue rollout status statefulset/postgres
-kubectl -n disttaskqueue rollout status statefulset/redis
-kubectl -n disttaskqueue rollout status deployment/gotenberg
-kubectl -n disttaskqueue rollout status deployment/api
-kubectl -n disttaskqueue rollout status deployment/worker-fetch
-# …etc
+kubectl -n disttaskqueue rollout status statefulset/postgres --timeout=120s
+kubectl -n disttaskqueue rollout status statefulset/redis --timeout=120s
+kubectl -n disttaskqueue rollout status deployment/gotenberg --timeout=180s
+kubectl -n disttaskqueue rollout status deployment/api --timeout=60s
+kubectl -n disttaskqueue rollout status deployment/worker-fetch deployment/worker-render deployment/worker-upload deployment/sweeper deployment/scheduler --timeout=60s
+
+kubectl -n disttaskqueue get pods     # all 9 Running
 ```
 
-### 3.3 Migrate data (if keeping existing jobs / users)
+### 3.4 Copy user identity + OAuth token
+
+Targeted copy, not a whole-DB `pg_dump`. Job history / queue state on the new cluster starts empty by design — only the bits that identify you and authorize Gmail/Drive move over.
 
 ```bash
-# Dump from old cluster:
-OLD_POD=$(KUBECONFIG=~/.kube/dtq-old kubectl -n disttaskqueue get pod -l app=postgres -o name)
-KUBECONFIG=~/.kube/dtq-old kubectl -n disttaskqueue exec -i $OLD_POD -- \
-  pg_dump -U dtq dtq > /tmp/dtq.sql
-
-# Restore to new cluster:
-NEW_POD=$(kubectl -n disttaskqueue get pod -l app=postgres -o name)
-kubectl -n disttaskqueue exec -i $NEW_POD -- psql -U dtq -d dtq < /tmp/dtq.sql
+KUBECONFIG=~/.kube/dtq-old kubectl -n disttaskqueue exec -i postgres-0 -- \
+  pg_dump -U dtq -d dtq --table=users --table=oauth_tokens --data-only --inserts \
+| kubectl -n disttaskqueue exec -i postgres-0 -- psql -U dtq -d dtq
 ```
 
-If you DON'T migrate data, the scheduler's first poll on the new cluster initializes the Gmail sync cursor from the current `historyId`. Past emails are not re-processed; forward-sync resumes.
+The scheduler's first poll on the new cluster initializes `gmail_sync_state` from the current Gmail `historyId` — past emails are not re-processed, forward-sync resumes. `processed_emails` starts empty; that's fine because Drive folder lookups are idempotent (find-or-create by name).
 
-### 3.4 Ingress (Cloudflare Tunnel)
-
-Quickest: log into the old droplet, `tmux kill-session -t cf`. On the new droplet, install `cloudflared` and run `cloudflared tunnel --url http://localhost:8080` (after `kubectl -n disttaskqueue port-forward svc/api 8080:80` in another tmux). The new `*.trycloudflare.com` URL starts serving.
-
-Proper: named Cloudflare Tunnel. See §4.
-
-### 3.5 Decommission the old cluster
+### 3.5 Verify
 
 ```bash
-# On the OLD host:
+curl -sS http://<NEW_IP>/healthz       # → "ok"
+curl -sS http://<NEW_IP>/version       # → {"version":"…","commit":"<sha>"}
+curl -sS http://<NEW_IP>/metrics | grep '^dtq_'   # gauges present
+open http://<NEW_IP>/                  # dashboard loads
+
+kubectl -n disttaskqueue logs deploy/scheduler --tail=20
+# Expect: "initialized sync cursor" with user_id + history_id within ~10s of pod start.
+```
+
+E2E test: send yourself an email, wait up to 5 min (scheduler poll interval), check `<DRIVE_ROOT_PATH>/YYYY/Month YYYY/DD Month YYYY (Weekday)/` for the PDF.
+
+### 3.6 Troubleshooting known bring-up failures
+
+**Worker / sweeper / scheduler pods crash with `password authentication failed for user "dtq"`.** postgres initialized with a different password than what's now in `dtq-secrets`. Re-align without re-initdb:
+
+```bash
+kubectl -n disttaskqueue exec postgres-0 -- \
+  psql -U dtq -d dtq -c "ALTER USER dtq WITH PASSWORD 'dtq';"
+kubectl -n disttaskqueue rollout restart deploy/api deploy/sweeper deploy/scheduler \
+  deploy/worker-fetch deploy/worker-render deploy/worker-upload
+```
+
+**gotenberg CrashLoopBackOff with `invalid overriding value 'tcp://…' from API_PORT`.** Should not occur on a fresh apply — `deploy/k8s/12-gotenberg.yaml` sets `enableServiceLinks: false` precisely to stop k8s auto-injecting `API_PORT` from the `api` Service. If you see it, the gotenberg manifest is stale; re-apply from main.
+
+**External `/healthz` returns 404 even though the api pod is Running.** Traefik has no route to the api Service. Confirm `kubectl -n disttaskqueue get ingress` shows the `api` Ingress; if missing, `kubectl apply -f deploy/k8s/27-ingress.yaml`.
+
+### 3.7 Decommission the old cluster
+
+```bash
+# Only after §3.5 green on the new cluster:
 ssh root@<OLD_IP> "/usr/local/bin/k3s-uninstall.sh"
-# On the cloud provider: delete the VM.
+# Delete the VM at the cloud provider.
 ```
 
 ---
@@ -308,6 +334,8 @@ Likely causes:
 ---
 
 ## 7. Runbook — first-time OAuth bootstrap
+
+Use this for a brand-new user with no existing encrypted token anywhere. If you're migrating a user from an old cluster, skip this and use §3.4's targeted row copy — faster and no browser step.
 
 ```bash
 # On your laptop (needs browser access):
