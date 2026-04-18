@@ -207,6 +207,33 @@ func TestUploadHandler_UploadsToDateTreeAndReturnsTerminal(t *testing.T) {
 
 	dataDir := t.TempDir()
 	jobID := uuid.New()
+
+	// Write meta.json
+	metaDir := filepath.Join(dataDir, "meta")
+	if err := os.MkdirAll(metaDir, 0o750); err != nil {
+		t.Fatal(err)
+	}
+	meta := handler.RenderMeta{
+		Subject:         "hi",
+		FromEmail:       "alice@example.com",
+		ReceivedAt:      time.Date(2026, 4, 17, 10, 30, 45, 0, time.UTC),
+		AttachmentNames: []string{"report.pdf"},
+	}
+	metaB, _ := json.Marshal(meta)
+	if err := os.WriteFile(filepath.Join(metaDir, jobID.String()+".json"), metaB, 0o600); err != nil {
+		t.Fatal(err)
+	}
+
+	// Write attachment file
+	attachDir := filepath.Join(dataDir, "attachments", jobID.String())
+	if err := os.MkdirAll(attachDir, 0o750); err != nil {
+		t.Fatal(err)
+	}
+	if err := os.WriteFile(filepath.Join(attachDir, "report.pdf"), []byte("PDF-DATA-2"), 0o600); err != nil {
+		t.Fatal(err)
+	}
+
+	// Write email PDF
 	pdfDir := filepath.Join(dataDir, "pdf")
 	if err := os.MkdirAll(pdfDir, 0o755); err != nil {
 		t.Fatal(err)

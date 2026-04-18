@@ -2,6 +2,7 @@ package handler
 
 import (
 	"context"
+	"encoding/json"
 	"errors"
 	"fmt"
 	"os"
@@ -40,6 +41,20 @@ func (h *UploadHandler) Process(ctx context.Context, job store.Job) (string, err
 		return "", errors.New("upload: job missing user_id")
 	}
 
+	// Load cross-stage metadata from render.
+	metaPath := filepath.Join(h.cfg.DataDir, "meta", job.ID.String()+".json") //nolint:gosec // trusted job ID
+	metaB, err := os.ReadFile(metaPath)                                       //nolint:gosec // trusted job ID
+	if err != nil {
+		return "", fmt.Errorf("read meta: %w", err)
+	}
+	var meta RenderMeta
+	if err := json.Unmarshal(metaB, &meta); err != nil {
+		return "", fmt.Errorf("parse meta: %w", err)
+	}
+	if meta.ReceivedAt.IsZero() {
+		meta.ReceivedAt = job.CreatedAt
+	}
+
 	client, err := drive.New(ctx, drive.Config{
 		Store:         h.cfg.Store,
 		UserID:        *job.UserID,
@@ -51,7 +66,8 @@ func (h *UploadHandler) Process(ctx context.Context, job store.Job) (string, err
 		return "", fmt.Errorf("drive client: %w", err)
 	}
 
-	folders := DateTreeFolders(job.CreatedAt)
+	// Walk date-tree + email folder.
+	folders := append(DateTreeFolders(meta.ReceivedAt), EmailFolderName(meta.ReceivedAt, meta.Subject, meta.FromEmail))
 	parent := h.cfg.RootFolderID
 	pathSoFar := ""
 	for _, f := range folders {
@@ -60,12 +76,10 @@ func (h *UploadHandler) Process(ctx context.Context, job store.Job) (string, err
 		} else {
 			pathSoFar = path.Join(pathSoFar, f)
 		}
-
 		if cached, ok, err := h.cache.Get(ctx, *job.UserID, pathSoFar); err == nil && ok {
 			parent = cached
 			continue
 		}
-
 		folderID, err := client.EnsureFolder(ctx, parent, f)
 		if err != nil {
 			return "", fmt.Errorf("ensure folder %s: %w", f, err)
@@ -74,14 +88,24 @@ func (h *UploadHandler) Process(ctx context.Context, job store.Job) (string, err
 		parent = folderID
 	}
 
-	pdfBytes, err := os.ReadFile(filepath.Join(h.cfg.DataDir, "pdf", job.ID.String()+".pdf"))
+	// Upload email.pdf.
+	pdfBytes, err := os.ReadFile(filepath.Join(h.cfg.DataDir, "pdf", job.ID.String()+".pdf")) //nolint:gosec // trusted job ID
 	if err != nil {
 		return "", fmt.Errorf("read pdf: %w", err)
 	}
+	if _, err := client.Upload(ctx, parent, "email.pdf", "application/pdf", pdfBytes); err != nil {
+		return "", fmt.Errorf("upload pdf: %w", err)
+	}
 
-	name := job.ID.String() + ".pdf"
-	if _, err := client.Upload(ctx, parent, name, "application/pdf", pdfBytes); err != nil {
-		return "", fmt.Errorf("upload: %w", err)
+	// Upload attachments (if any).
+	for _, name := range meta.AttachmentNames {
+		data, err := os.ReadFile(filepath.Join(h.cfg.DataDir, "attachments", job.ID.String(), name)) //nolint:gosec // trusted job ID
+		if err != nil {
+			return "", fmt.Errorf("read attachment %s: %w", name, err)
+		}
+		if _, err := client.Upload(ctx, parent, name, "application/octet-stream", data); err != nil {
+			return "", fmt.Errorf("upload attachment %s: %w", name, err)
+		}
 	}
 
 	return "", nil
