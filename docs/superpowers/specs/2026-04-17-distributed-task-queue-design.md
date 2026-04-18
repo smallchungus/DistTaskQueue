@@ -252,9 +252,19 @@ A single page, served by the API. No SPA framework — vanilla HTML + a small am
 
 Synthetic and real jobs share the queue but are tagged so the dashboard can color them differently and so synthetic jobs are not actually written to Drive (the upload worker no-ops on `is_synthetic=true`).
 
-### Rate limiting on demo buttons
+### Abuse and cost protection
 
-Per-IP token bucket: 1 click/sec sustained, burst 5. The flood button is gated behind a 60 s cooldown. Prevents trivial abuse without needing accounts.
+The dashboard's demo buttons are public. The defenses below assume a determined bot eventually finds the URL.
+
+**Synthetic-only demo workload.** Demo trigger endpoints can ONLY enqueue jobs with `is_synthetic = true`. Real Gmail/Drive job creation is restricted to the scheduler (which only YOU run via the cron). Even if a bot floods the dashboard, no Gmail message gets fetched and no Drive upload happens — synthetic jobs no-op at the upload stage by design.
+
+**Per-IP token bucket** on demo trigger endpoints: 1 click/sec sustained, burst 5. The flood button is gated behind a 60 s cooldown. Implemented in-memory in the API binary; survives restart loss is acceptable.
+
+**Daily synthetic job cap.** Redis counter `dashboard:synthetic_jobs:YYYY-MM-DD` with `EXPIREAT` set to next midnight UTC. Default cap: 100,000 jobs/day total across all visitors. When exceeded, demo buttons return HTTP 429 until midnight. Tunable via env var.
+
+**Cloudflare protection.** Tunnel sits behind Cloudflare's free WAF + bot-fight mode. Blocks obvious headless-browser patterns and absorbs DDoS for free. (Enabled in the Cloudflare dashboard during Phase 1.5 setup, not in code.)
+
+**Cost surface is fixed by infrastructure.** Hetzner CX22 is flat-rate (~$5/mo, no bandwidth or CPU billing in normal range). Gmail and Drive APIs are free with rate limits, not per-request billing — quota exhaustion pauses *your* sync for a few hours but never produces a bill. Worst realistic abuse outcome: $0 in extra charges, an embarrassing afternoon of slow responses.
 
 ## 7. Failure handling
 
