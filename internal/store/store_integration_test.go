@@ -63,3 +63,38 @@ func TestGetJob_ReturnsErrNotFoundForUnknownID(t *testing.T) {
 		t.Fatalf("got %v, want ErrJobNotFound", err)
 	}
 }
+
+func TestClaimJob_TransitionsQueuedToRunning(t *testing.T) {
+	s := newStore(t)
+	ctx := context.Background()
+	j, _ := s.EnqueueJob(ctx, store.NewJob{Stage: "test"})
+
+	if err := s.ClaimJob(ctx, j.ID, "worker-1"); err != nil {
+		t.Fatalf("claim: %v", err)
+	}
+
+	got, _ := s.GetJob(ctx, j.ID)
+	if got.Status != store.StatusRunning {
+		t.Fatalf("status: %s", got.Status)
+	}
+	if got.WorkerID == nil || *got.WorkerID != "worker-1" {
+		t.Fatalf("worker_id: %v", got.WorkerID)
+	}
+	if got.ClaimedAt == nil {
+		t.Fatalf("claimed_at: nil")
+	}
+}
+
+func TestClaimJob_FailsWhenNotQueued(t *testing.T) {
+	s := newStore(t)
+	ctx := context.Background()
+	j, _ := s.EnqueueJob(ctx, store.NewJob{Stage: "test"})
+	if err := s.ClaimJob(ctx, j.ID, "worker-1"); err != nil {
+		t.Fatal(err)
+	}
+
+	err := s.ClaimJob(ctx, j.ID, "worker-2")
+	if !errors.Is(err, store.ErrJobNotClaimable) {
+		t.Fatalf("got %v, want ErrJobNotClaimable", err)
+	}
+}

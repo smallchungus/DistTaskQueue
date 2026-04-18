@@ -43,6 +43,26 @@ func (s *Store) EnqueueJob(ctx context.Context, nj NewJob) (Job, error) {
 	return j, nil
 }
 
+var ErrJobNotClaimable = errors.New("job not claimable")
+
+func (s *Store) ClaimJob(ctx context.Context, id uuid.UUID, workerID string) error {
+	const q = `
+		UPDATE pipeline_jobs
+		SET status = $1, worker_id = $2, claimed_at = now(), updated_at = now()
+		WHERE id = $3 AND status = $4
+		RETURNING id`
+
+	var got uuid.UUID
+	err := s.pool.QueryRow(ctx, q, StatusRunning, workerID, id, StatusQueued).Scan(&got)
+	if errors.Is(err, pgx.ErrNoRows) {
+		return ErrJobNotClaimable
+	}
+	if err != nil {
+		return fmt.Errorf("claim: %w", err)
+	}
+	return nil
+}
+
 func (s *Store) GetJob(ctx context.Context, id uuid.UUID) (Job, error) {
 	const q = `
 		SELECT id, stage, status, payload, worker_id, attempts, max_attempts,
