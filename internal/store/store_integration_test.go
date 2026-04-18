@@ -315,6 +315,43 @@ func TestAdvanceJob_TransitionsToNextStage(t *testing.T) {
 	}
 }
 
+func TestListStaleQueuedJobs_ReturnsOldQueuedWithoutLastError(t *testing.T) {
+	s := newStore(t)
+	ctx := context.Background()
+
+	jStale, _ := s.EnqueueJob(ctx, store.NewJob{Stage: "fetch"})
+	if _, err := s.GetJob(ctx, jStale.ID); err != nil {
+		t.Fatal(err)
+	}
+	if _, err := s.PoolForTest().Exec(ctx, //nolint:gosec
+		`UPDATE pipeline_jobs SET created_at = now() - interval '5 minutes' WHERE id = $1`,
+		jStale.ID,
+	); err != nil {
+		t.Fatal(err)
+	}
+
+	_, _ = s.EnqueueJob(ctx, store.NewJob{Stage: "fetch"})
+
+	jRetry, _ := s.EnqueueJob(ctx, store.NewJob{Stage: "fetch"})
+	_ = s.ClaimJob(ctx, jRetry.ID, "w1")
+	_ = s.MarkFailed(ctx, jRetry.ID, "boom", time.Now().Add(-1*time.Hour))
+	_, _ = s.PoolForTest().Exec(ctx, //nolint:gosec
+		`UPDATE pipeline_jobs SET created_at = now() - interval '5 minutes' WHERE id = $1`,
+		jRetry.ID,
+	)
+
+	jobs, err := s.ListStaleQueuedJobs(ctx, 1*time.Minute)
+	if err != nil {
+		t.Fatal(err)
+	}
+	if len(jobs) != 1 {
+		t.Fatalf("got %d, want 1; got: %v", len(jobs), jobIDs(jobs))
+	}
+	if jobs[0].ID != jStale.ID {
+		t.Fatalf("got %s, want %s", jobs[0].ID, jStale.ID)
+	}
+}
+
 func jobIDs(js []store.Job) []string {
 	out := make([]string, len(js))
 	for i, j := range js {
