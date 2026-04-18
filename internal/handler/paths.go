@@ -93,8 +93,8 @@ func SanitizeFilename(name string) string {
 	b.Grow(len(name))
 	lastDash := false
 	for _, r := range name {
-		switch {
-		case r == 0, r == '/', r == '\\':
+		switch r {
+		case 0, '/', '\\':
 			if !lastDash {
 				b.WriteByte('-')
 				lastDash = true
