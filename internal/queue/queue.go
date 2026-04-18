@@ -4,6 +4,7 @@ import (
 	"context"
 	"errors"
 	"fmt"
+	"strconv"
 	"time"
 
 	goredis "github.com/redis/go-redis/v9"
@@ -50,4 +51,15 @@ func (q *Queue) Depth(ctx context.Context, stage string) (int64, error) {
 		return 0, fmt.Errorf("depth: %w", err)
 	}
 	return n, nil
+}
+
+// Client exposes the underlying Redis client. Test-only.
+func (q *Queue) Client() *goredis.Client { return q.cli }
+
+func (q *Queue) Heartbeat(ctx context.Context, workerID string, ttl time.Duration) error {
+	now := strconv.FormatInt(time.Now().Unix(), 10)
+	if err := q.cli.Set(ctx, "heartbeat:"+workerID, now, ttl).Err(); err != nil {
+		return fmt.Errorf("heartbeat: %w", err)
+	}
+	return nil
 }
