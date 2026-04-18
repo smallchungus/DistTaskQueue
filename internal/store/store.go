@@ -165,6 +165,25 @@ func (s *Store) AdvanceJob(ctx context.Context, id uuid.UUID, nextStage string) 
 	return nil
 }
 
+func (s *Store) PoolForTest() *pgxpool.Pool { return s.pool }
+
+func (s *Store) ListStaleQueuedJobs(ctx context.Context, threshold time.Duration) ([]Job, error) {
+	const q = `
+		SELECT id, user_id, gmail_message_id, stage, status, payload, is_synthetic,
+		       worker_id, attempts, max_attempts, last_error, next_run_at,
+		       claimed_at, completed_at, created_at, updated_at
+		FROM pipeline_jobs
+		WHERE status = $1 AND last_error IS NULL
+		  AND created_at < now() - make_interval(secs => $2)`
+
+	rows, err := s.pool.Query(ctx, q, StatusQueued, threshold.Seconds())
+	if err != nil {
+		return nil, fmt.Errorf("list stale queued: %w", err)
+	}
+	defer rows.Close()
+	return scanJobs(rows)
+}
+
 func (s *Store) GetJob(ctx context.Context, id uuid.UUID) (Job, error) {
 	const q = `
 		SELECT id, user_id, gmail_message_id, stage, status, payload, is_synthetic,
