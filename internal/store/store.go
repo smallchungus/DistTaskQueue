@@ -149,6 +149,22 @@ func scanJobs(rows pgx.Rows) ([]Job, error) {
 	return out, nil
 }
 
+func (s *Store) AdvanceJob(ctx context.Context, id uuid.UUID, nextStage string) error {
+	const q = `
+		UPDATE pipeline_jobs
+		SET stage = $1, status = $2, worker_id = NULL, claimed_at = NULL, updated_at = now()
+		WHERE id = $3 AND status = $4`
+
+	tag, err := s.pool.Exec(ctx, q, nextStage, StatusQueued, id, StatusRunning)
+	if err != nil {
+		return fmt.Errorf("advance: %w", err)
+	}
+	if tag.RowsAffected() == 0 {
+		return ErrJobNotFound
+	}
+	return nil
+}
+
 func (s *Store) GetJob(ctx context.Context, id uuid.UUID) (Job, error) {
 	const q = `
 		SELECT id, user_id, gmail_message_id, stage, status, payload, is_synthetic,

@@ -293,6 +293,28 @@ func TestGetOAuthToken_ReturnsErrOAuthTokenNotFound(t *testing.T) {
 	}
 }
 
+func TestAdvanceJob_TransitionsToNextStage(t *testing.T) {
+	s := newStore(t)
+	ctx := context.Background()
+	j, _ := s.EnqueueJob(ctx, store.NewJob{Stage: "fetch"})
+	_ = s.ClaimJob(ctx, j.ID, "w1")
+
+	if err := s.AdvanceJob(ctx, j.ID, "render"); err != nil {
+		t.Fatalf("advance: %v", err)
+	}
+
+	got, _ := s.GetJob(ctx, j.ID)
+	if got.Stage != "render" {
+		t.Fatalf("stage: %s, want render", got.Stage)
+	}
+	if got.Status != store.StatusQueued {
+		t.Fatalf("status: %s, want queued", got.Status)
+	}
+	if got.WorkerID != nil {
+		t.Fatalf("worker_id: %v, want nil", got.WorkerID)
+	}
+}
+
 func jobIDs(js []store.Job) []string {
 	out := make([]string, len(js))
 	for i, j := range js {
