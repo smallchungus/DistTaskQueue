@@ -6,6 +6,7 @@ import (
 	"log/slog"
 	"os"
 	"os/signal"
+	"strconv"
 	"syscall"
 	"time"
 
@@ -67,7 +68,7 @@ func main() {
 			Endpoint:     google.Endpoint,
 			Scopes:       []string{"https://www.googleapis.com/auth/gmail.readonly", "https://www.googleapis.com/auth/drive.file"},
 		},
-		Interval: 5 * time.Minute,
+		Interval: time.Duration(envIntOr("SCHEDULER_POLL_INTERVAL_SEC", 300)) * time.Second,
 	})
 
 	slog.Info("scheduler starting")
@@ -92,4 +93,15 @@ func mustEnv(k string) string {
 		os.Exit(1)
 	}
 	return v
+}
+
+// envIntOr reads an env var as an integer. Non-positive / invalid values fall
+// back to def. Required so the poll interval can be tuned without recompiling.
+func envIntOr(k string, def int) int {
+	if v := os.Getenv(k); v != "" {
+		if n, err := strconv.Atoi(v); err == nil && n > 0 {
+			return n
+		}
+	}
+	return def
 }

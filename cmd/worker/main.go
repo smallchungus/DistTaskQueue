@@ -7,6 +7,7 @@ import (
 	"log/slog"
 	"os"
 	"os/signal"
+	"strconv"
 	"syscall"
 	"time"
 
@@ -98,9 +99,9 @@ func main() {
 		Store:             store.New(pool),
 		Queue:             queue.New(redis),
 		Handler:           h,
-		PopTimeout:        30 * time.Second,
-		HeartbeatTTL:      15 * time.Second,
-		HeartbeatInterval: 5 * time.Second,
+		PopTimeout:        envDurationSec("WORKER_POP_TIMEOUT_SEC", 30),
+		HeartbeatTTL:      envDurationSec("WORKER_HEARTBEAT_TTL_SEC", 15),
+		HeartbeatInterval: envDurationSec("WORKER_HEARTBEAT_INTERVAL_SEC", 5),
 	})
 
 	slog.Info("worker starting", "stage", *stage)
@@ -146,4 +147,15 @@ func envOr(k, def string) string {
 		return v
 	}
 	return def
+}
+
+// envDurationSec reads an env var as seconds. Non-positive / invalid values
+// fall back to def. Required so timeouts can be tuned without recompiling.
+func envDurationSec(k string, def int) time.Duration {
+	if v := os.Getenv(k); v != "" {
+		if n, err := strconv.Atoi(v); err == nil && n > 0 {
+			return time.Duration(n) * time.Second
+		}
+	}
+	return time.Duration(def) * time.Second
 }

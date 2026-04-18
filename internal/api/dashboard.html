@@ -2,95 +2,124 @@
 <html lang="en">
 <head>
 <meta charset="utf-8">
-<title>DistTaskQueue — dashboard</title>
+<title>DistTaskQueue — live dashboard</title>
+<script src="https://cdn.jsdelivr.net/npm/chart.js@4.4.0/dist/chart.umd.min.js"></script>
 <style>
   :root {
-    --bg: #0e1116;
+    --bg: #0d1117;
+    --bg-card: #161b22;
     --fg: #e6edf3;
-    --muted: #7d8590;
+    --fg-dim: #7d8590;
     --border: #30363d;
+    --border-strong: #444c56;
     --queued: #d29922;
-    --running: #1f6feb;
+    --running: #2188ff;
     --done: #2ea043;
     --dead: #f85149;
-    --card: #161b22;
+    --accent: #58a6ff;
+    --accent-dim: #1f6feb33;
   }
   * { box-sizing: border-box; }
   body {
     margin: 0;
-    font-family: -apple-system, BlinkMacSystemFont, "Segoe UI", sans-serif;
+    font-family: -apple-system, BlinkMacSystemFont, "Inter", "Segoe UI", sans-serif;
     background: var(--bg);
     color: var(--fg);
-    padding: 20px 32px;
+    padding: 24px 32px 48px;
+    font-feature-settings: "tnum";
   }
   h1 {
-    font-size: 20px;
+    font-size: 22px;
     font-weight: 600;
-    margin: 0 0 4px;
+    margin: 0;
+    display: flex;
+    align-items: center;
+    gap: 10px;
+  }
+  h1::before {
+    content: "";
+    width: 8px; height: 8px;
+    border-radius: 50%;
+    background: var(--done);
+    box-shadow: 0 0 8px var(--done);
+    display: inline-block;
   }
   .subtitle {
-    color: var(--muted);
+    color: var(--fg-dim);
     font-size: 13px;
-    margin: 0 0 24px;
+    margin: 4px 0 20px;
   }
   .grid {
     display: grid;
-    grid-template-columns: repeat(3, 1fr);
-    gap: 16px;
-    margin-bottom: 24px;
+    grid-template-columns: repeat(12, 1fr);
+    gap: 12px;
+    margin-bottom: 16px;
   }
   .card {
-    background: var(--card);
+    background: var(--bg-card);
     border: 1px solid var(--border);
-    border-radius: 6px;
+    border-radius: 8px;
     padding: 14px 18px;
+    transition: border-color 0.2s ease;
   }
+  .card:hover { border-color: var(--border-strong); }
   .card h2 {
-    font-size: 11px;
+    font-size: 10px;
     text-transform: uppercase;
-    letter-spacing: 0.5px;
-    color: var(--muted);
-    margin: 0 0 8px;
+    letter-spacing: 0.7px;
+    color: var(--fg-dim);
+    margin: 0 0 10px;
+    font-weight: 600;
   }
+  .span-3 { grid-column: span 3; }
+  .span-4 { grid-column: span 4; }
+  .span-6 { grid-column: span 6; }
+  .span-8 { grid-column: span 8; }
+  .span-12 { grid-column: span 12; }
   .metric-row {
     display: flex;
-    gap: 20px;
+    gap: 22px;
     flex-wrap: wrap;
   }
   .metric {
     display: flex;
     flex-direction: column;
+    gap: 2px;
   }
   .metric .value {
-    font-size: 24px;
+    font-size: 26px;
     font-weight: 600;
     font-variant-numeric: tabular-nums;
+    transition: color 0.3s ease;
+  }
+  .metric .value.pulse {
+    color: var(--accent);
   }
   .metric .label {
-    font-size: 11px;
-    color: var(--muted);
+    font-size: 10px;
+    color: var(--fg-dim);
     text-transform: uppercase;
-    letter-spacing: 0.3px;
+    letter-spacing: 0.4px;
   }
   .status {
     display: inline-block;
     padding: 2px 8px;
-    border-radius: 10px;
-    font-size: 11px;
+    border-radius: 12px;
+    font-size: 10px;
     font-weight: 500;
     text-transform: uppercase;
     letter-spacing: 0.3px;
   }
-  .status.queued { background: rgba(210, 153, 34, 0.2); color: var(--queued); }
-  .status.running { background: rgba(31, 111, 235, 0.2); color: var(--running); }
+  .status.queued { background: rgba(210, 153, 34, 0.18); color: var(--queued); }
+  .status.running { background: rgba(33, 136, 255, 0.2); color: var(--running); }
   .status.done { background: rgba(46, 160, 67, 0.2); color: var(--done); }
   .status.dead { background: rgba(248, 81, 73, 0.2); color: var(--dead); }
   table {
     width: 100%;
     border-collapse: collapse;
-    background: var(--card);
+    background: var(--bg-card);
     border: 1px solid var(--border);
-    border-radius: 6px;
+    border-radius: 8px;
     overflow: hidden;
   }
   th, td {
@@ -101,45 +130,103 @@
   }
   th {
     background: #1c232b;
-    color: var(--muted);
+    color: var(--fg-dim);
     font-weight: 500;
     text-transform: uppercase;
-    font-size: 11px;
-    letter-spacing: 0.3px;
+    font-size: 10px;
+    letter-spacing: 0.4px;
   }
   tr:last-child td { border-bottom: none; }
-  td.mono { font-family: ui-monospace, SFMono-Regular, Menlo, monospace; font-size: 12px; color: var(--muted); }
+  tr.new-row { animation: fadein 0.5s ease; }
+  @keyframes fadein { from { background: var(--accent-dim); } to { background: transparent; } }
+  td.mono {
+    font-family: ui-monospace, SFMono-Regular, Menlo, monospace;
+    font-size: 12px;
+    color: var(--fg-dim);
+  }
   td.err { color: var(--dead); font-size: 12px; }
   .workers {
     font-family: ui-monospace, SFMono-Regular, Menlo, monospace;
-    font-size: 12px;
-    color: var(--muted);
-    word-break: break-all;
-  }
-  .workers .live {
+    font-size: 11px;
     color: var(--done);
+    word-break: break-all;
+    line-height: 1.6;
   }
+  .workers.empty { color: var(--fg-dim); }
+
+  .buttons {
+    display: flex;
+    gap: 10px;
+    flex-wrap: wrap;
+  }
+  button.demo {
+    background: var(--bg);
+    color: var(--fg);
+    border: 1px solid var(--border-strong);
+    border-radius: 6px;
+    padding: 8px 14px;
+    font-size: 13px;
+    font-weight: 500;
+    cursor: pointer;
+    transition: all 0.15s ease;
+    font-family: inherit;
+  }
+  button.demo:hover {
+    border-color: var(--accent);
+    color: var(--accent);
+    transform: translateY(-1px);
+  }
+  button.demo:active { transform: translateY(0); }
+  button.demo:disabled {
+    opacity: 0.4;
+    cursor: not-allowed;
+    transform: none;
+  }
+  button.demo.flood { border-color: #8957e5; color: #c4a2ff; }
+  button.demo.flood:hover { background: rgba(137, 87, 229, 0.1); }
+
+  .toast {
+    position: fixed;
+    bottom: 24px;
+    right: 24px;
+    background: var(--bg-card);
+    border: 1px solid var(--border-strong);
+    border-radius: 6px;
+    padding: 10px 16px;
+    font-size: 13px;
+    color: var(--fg);
+    box-shadow: 0 10px 30px rgba(0,0,0,0.4);
+    opacity: 0;
+    transform: translateY(8px);
+    transition: all 0.2s ease;
+    pointer-events: none;
+  }
+  .toast.show { opacity: 1; transform: translateY(0); }
+  .toast.err { border-color: var(--dead); color: var(--dead); }
+
   .footer {
-    margin-top: 20px;
-    color: var(--muted);
-    font-size: 12px;
+    margin-top: 18px;
+    color: var(--fg-dim);
+    font-size: 11px;
   }
+  #chart-container { position: relative; height: 160px; }
 </style>
 </head>
 <body>
 <h1>DistTaskQueue</h1>
-<p class="subtitle">Gmail → PDF → Drive pipeline • auto-refreshes every 2s</p>
+<p class="subtitle">Gmail → PDF → Drive pipeline · live queue stats · auto-refresh every 1s</p>
 
 <div class="grid">
-  <div class="card">
+  <div class="card span-3">
     <h2>Queue depths</h2>
     <div class="metric-row">
       <div class="metric"><span class="value" id="qd-fetch">—</span><span class="label">fetch</span></div>
       <div class="metric"><span class="value" id="qd-render">—</span><span class="label">render</span></div>
       <div class="metric"><span class="value" id="qd-upload">—</span><span class="label">upload</span></div>
+      <div class="metric"><span class="value" id="qd-test">—</span><span class="label">demo</span></div>
     </div>
   </div>
-  <div class="card">
+  <div class="card span-4">
     <h2>Job counts</h2>
     <div class="metric-row">
       <div class="metric"><span class="value" id="jc-queued">—</span><span class="label">queued</span></div>
@@ -148,9 +235,23 @@
       <div class="metric"><span class="value" id="jc-dead">—</span><span class="label">dead</span></div>
     </div>
   </div>
-  <div class="card">
-    <h2>Live workers</h2>
-    <div class="workers live" id="workers">—</div>
+  <div class="card span-5">
+    <h2>Try it</h2>
+    <div class="buttons">
+      <button class="demo" data-endpoint="burst">Burst 100 jobs</button>
+      <button class="demo" data-endpoint="slow">Slow job (5s)</button>
+      <button class="demo" data-endpoint="flaky">Flaky job</button>
+      <button class="demo flood" data-endpoint="flood">Flood 1000 jobs</button>
+    </div>
+  </div>
+
+  <div class="card span-8">
+    <h2>Queue depth over last 60s</h2>
+    <div id="chart-container"><canvas id="chart"></canvas></div>
+  </div>
+  <div class="card span-4">
+    <h2>Processing workers</h2>
+    <div class="workers empty" id="workers">(idle — workers only beat while processing)</div>
   </div>
 </div>
 
@@ -166,60 +267,175 @@
       <th>Error</th>
     </tr>
   </thead>
-  <tbody id="jobs"><tr><td colspan="7" style="color: var(--muted)">loading…</td></tr></tbody>
+  <tbody id="jobs"><tr><td colspan="7" style="color: var(--fg-dim)">loading…</td></tr></tbody>
 </table>
 
 <div class="footer" id="footer">—</div>
+<div class="toast" id="toast"></div>
 
 <script>
-  const elem = (id) => document.getElementById(id);
+  const $ = (id) => document.getElementById(id);
+
   const fmtTime = (iso) => {
     if (!iso) return '—';
     const d = new Date(iso);
-    const diffSec = Math.floor((Date.now() - d.getTime()) / 1000);
-    if (diffSec < 60) return diffSec + 's ago';
-    if (diffSec < 3600) return Math.floor(diffSec / 60) + 'm ago';
-    return Math.floor(diffSec / 3600) + 'h ago';
+    const s = Math.floor((Date.now() - d.getTime()) / 1000);
+    if (s < 60) return s + 's ago';
+    if (s < 3600) return Math.floor(s / 60) + 'm ago';
+    return Math.floor(s / 3600) + 'h ago';
   };
+
+  const ctx = $('chart').getContext('2d');
+  const seriesLabels = ['fetch', 'render', 'upload', 'demo'];
+  const seriesColors = ['#d29922', '#2188ff', '#2ea043', '#58a6ff'];
+  const historyLen = 60;
+  const history = { t: [], fetch: [], render: [], upload: [], demo: [] };
+  const chart = new Chart(ctx, {
+    type: 'line',
+    data: {
+      labels: [],
+      datasets: seriesLabels.map((name, i) => ({
+        label: name,
+        data: [],
+        borderColor: seriesColors[i],
+        backgroundColor: seriesColors[i] + '22',
+        borderWidth: 1.5,
+        tension: 0.25,
+        pointRadius: 0,
+        fill: false,
+      })),
+    },
+    options: {
+      responsive: true,
+      maintainAspectRatio: false,
+      animation: false,
+      scales: {
+        x: { ticks: { color: '#7d8590', maxRotation: 0, autoSkip: true, maxTicksLimit: 6 }, grid: { color: '#30363d33' } },
+        y: { ticks: { color: '#7d8590', beginAtZero: true, precision: 0 }, grid: { color: '#30363d33' }, beginAtZero: true },
+      },
+      plugins: {
+        legend: { labels: { color: '#e6edf3', boxWidth: 10, font: { size: 11 } } },
+        tooltip: { enabled: true },
+      },
+    },
+  });
+
+  const lastCount = {};
+  function pulse(id, val) {
+    const el = $(id);
+    el.textContent = val;
+    if (lastCount[id] !== undefined && lastCount[id] !== val) {
+      el.classList.add('pulse');
+      setTimeout(() => el.classList.remove('pulse'), 350);
+    }
+    lastCount[id] = val;
+  }
+
+  const toastEl = $('toast');
+  function toast(msg, err) {
+    toastEl.textContent = msg;
+    toastEl.classList.toggle('err', !!err);
+    toastEl.classList.add('show');
+    clearTimeout(toast._h);
+    toast._h = setTimeout(() => toastEl.classList.remove('show'), 2200);
+  }
+
+  const lastJobIDs = new Set();
 
   async function refresh() {
     try {
       const [sRes, jRes] = await Promise.all([
         fetch('/api/stats').then(r => r.json()),
-        fetch('/api/jobs/recent?limit=20').then(r => r.json()),
+        fetch('/api/jobs/recent?limit=25').then(r => r.json()),
       ]);
 
-      elem('qd-fetch').textContent = sRes.queue_depths.fetch ?? 0;
-      elem('qd-render').textContent = sRes.queue_depths.render ?? 0;
-      elem('qd-upload').textContent = sRes.queue_depths.upload ?? 0;
-      elem('jc-queued').textContent = sRes.job_counts.queued ?? 0;
-      elem('jc-running').textContent = sRes.job_counts.running ?? 0;
-      elem('jc-done').textContent = sRes.job_counts.done ?? 0;
-      elem('jc-dead').textContent = sRes.job_counts.dead ?? 0;
-      elem('workers').textContent = (sRes.alive_workers && sRes.alive_workers.length)
-        ? sRes.alive_workers.join(' · ') : '(none)';
+      pulse('qd-fetch',  sRes.queue_depths.fetch  ?? 0);
+      pulse('qd-render', sRes.queue_depths.render ?? 0);
+      pulse('qd-upload', sRes.queue_depths.upload ?? 0);
+      pulse('qd-test',   sRes.queue_depths.test   ?? 0);
+      pulse('jc-queued',  sRes.job_counts.queued  ?? 0);
+      pulse('jc-running', sRes.job_counts.running ?? 0);
+      pulse('jc-done',    sRes.job_counts.done    ?? 0);
+      pulse('jc-dead',    sRes.job_counts.dead    ?? 0);
 
-      const rows = (jRes.jobs || []).map(j => `
-        <tr>
-          <td class="mono">${j.id.slice(0, 8)}</td>
-          <td>${j.stage}</td>
-          <td><span class="status ${j.status}">${j.status}</span></td>
-          <td>${j.attempts}</td>
-          <td class="mono">${j.gmail_message_id || '—'}</td>
-          <td class="mono">${fmtTime(j.created_at)}</td>
-          <td class="err">${j.last_error || ''}</td>
-        </tr>
-      `).join('');
-      elem('jobs').innerHTML = rows || '<tr><td colspan="7" style="color: var(--muted)">(no jobs yet)</td></tr>';
+      const workersEl = $('workers');
+      if (sRes.alive_workers && sRes.alive_workers.length) {
+        workersEl.classList.remove('empty');
+        workersEl.textContent = sRes.alive_workers.join('  ·  ');
+      } else {
+        workersEl.classList.add('empty');
+        workersEl.textContent = '(idle — workers only beat while processing)';
+      }
 
-      elem('footer').textContent = 'last refreshed ' + new Date().toLocaleTimeString();
+      const now = new Date();
+      const label = now.toLocaleTimeString([], { hour12: false });
+      history.t.push(label);
+      history.fetch.push(sRes.queue_depths.fetch ?? 0);
+      history.render.push(sRes.queue_depths.render ?? 0);
+      history.upload.push(sRes.queue_depths.upload ?? 0);
+      history.demo.push(sRes.queue_depths.test ?? 0);
+      while (history.t.length > historyLen) {
+        history.t.shift();
+        history.fetch.shift();
+        history.render.shift();
+        history.upload.shift();
+        history.demo.shift();
+      }
+      chart.data.labels = history.t;
+      chart.data.datasets[0].data = history.fetch;
+      chart.data.datasets[1].data = history.render;
+      chart.data.datasets[2].data = history.upload;
+      chart.data.datasets[3].data = history.demo;
+      chart.update('none');
+
+      const jobs = jRes.jobs || [];
+      const rows = jobs.map(j => {
+        const isNew = !lastJobIDs.has(j.id);
+        return `
+          <tr${isNew ? ' class="new-row"' : ''}>
+            <td class="mono">${j.id.slice(0, 8)}</td>
+            <td>${j.stage}</td>
+            <td><span class="status ${j.status}">${j.status}</span></td>
+            <td>${j.attempts}</td>
+            <td class="mono">${j.gmail_message_id || '—'}</td>
+            <td class="mono">${fmtTime(j.created_at)}</td>
+            <td class="err">${j.last_error || ''}</td>
+          </tr>
+        `;
+      }).join('');
+      $('jobs').innerHTML = rows || '<tr><td colspan="7" style="color: var(--fg-dim)">(no jobs yet)</td></tr>';
+      lastJobIDs.clear();
+      jobs.forEach(j => lastJobIDs.add(j.id));
+
+      $('footer').textContent = 'last refreshed ' + new Date().toLocaleTimeString();
     } catch (err) {
-      elem('footer').textContent = 'error: ' + err.message;
+      $('footer').textContent = 'error: ' + err.message;
     }
   }
 
+  document.querySelectorAll('button.demo').forEach(btn => {
+    btn.addEventListener('click', async () => {
+      const ep = btn.dataset.endpoint;
+      btn.disabled = true;
+      try {
+        const r = await fetch('/api/demo/' + ep, { method: 'POST' });
+        const body = await r.json();
+        if (r.ok) {
+          toast((body.enqueued ?? 1) + ' enqueued via /' + ep);
+        } else {
+          toast(body.error || 'demo failed', true);
+        }
+      } catch (err) {
+        toast('network error: ' + err.message, true);
+      } finally {
+        setTimeout(() => { btn.disabled = false; }, 800);
+        refresh();
+      }
+    });
+  });
+
   refresh();
-  setInterval(refresh, 2000);
+  setInterval(refresh, 1000);
 </script>
 </body>
 </html>

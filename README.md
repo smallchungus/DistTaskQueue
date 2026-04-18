@@ -120,9 +120,13 @@ Integration tests stay in CI only (they need Docker and are slow).
 
 ## Architecture
 
-See [docs/superpowers/specs/2026-04-17-distributed-task-queue-design.md](docs/superpowers/specs/2026-04-17-distributed-task-queue-design.md) for the full design.
+Deep walkthrough: **[docs/ARCHITECTURE.md](docs/ARCHITECTURE.md)** — why each component looks the way it does, what alternatives were considered and rejected, what correctness the system guarantees, where it scales and where it doesn't.
+
+Operations / runbooks: **[docs/OPERATIONS.md](docs/OPERATIONS.md)** — cloud swap, scaling, OAuth bootstrap, disaster recovery.
 
 Three-stage pipeline: `fetch` → `render` → `upload`. Each stage is an independently autoscaled Kubernetes Deployment with its own Redis queue. Postgres holds pipeline state, status history, OAuth tokens, and idempotency keys. A sweeper requeues jobs from workers that go silent for >30 s.
+
+Prometheus metrics are exported at `GET /metrics` — queue depth per stage, job counts per status, live worker count. Ready for Grafana or HPA.
 
 ```
                               ┌──────────────┐

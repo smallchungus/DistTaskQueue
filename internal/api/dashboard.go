@@ -30,6 +30,9 @@ type statsResponse struct {
 	ServerTime   time.Time        `json:"server_time"`
 }
 
+// Ensure *queue.Queue satisfies queuePusher so mountDemo can accept it.
+var _ queuePusher = (*queue.Queue)(nil)
+
 type jobSummary struct {
 	ID             string     `json:"id"`
 	Stage          string     `json:"stage"`
@@ -60,7 +63,7 @@ func (d *dashboard) stats(w http.ResponseWriter, r *http.Request) {
 		ServerTime:   time.Now().UTC(),
 	}
 
-	for _, stage := range []string{"fetch", "render", "upload"} {
+	for _, stage := range []string{"fetch", "render", "upload", "test"} {
 		n, err := d.queue.Depth(ctx, stage)
 		if err != nil {
 			writeJSONErr(w, http.StatusInternalServerError, "queue depth: "+err.Error())
