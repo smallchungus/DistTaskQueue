@@ -36,3 +36,18 @@ type NewJob struct {
 	Stage   string
 	Payload json.RawMessage
 }
+
+type User struct {
+	ID        uuid.UUID
+	Email     string
+	CreatedAt time.Time
+}
+
+type OAuthToken struct {
+	UserID    uuid.UUID
+	Provider  string
+	AccessCT  []byte
+	RefreshCT []byte
+	ExpiresAt time.Time
+	UpdatedAt time.Time
+}
