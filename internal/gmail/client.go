@@ -61,7 +61,7 @@ func (c *Client) LatestMessageIDs(ctx context.Context, lastHistoryID string) (ne
 
 	resp, err := c.svc.Users.History.List("me").
 		StartHistoryId(startID).
-		HistoryTypes("messageAdded").
+		HistoryTypes("messageAdded", "labelAdded").
 		LabelId("INBOX").
 		Context(ctx).
 		Do()
@@ -69,15 +69,32 @@ func (c *Client) LatestMessageIDs(ctx context.Context, lastHistoryID string) (ne
 		return nil, "", fmt.Errorf("history list: %w", err)
 	}
 
+	// Deduplicate across messagesAdded + labelsAdded events — the same message
+	// ID can appear in both within the history window.
+	seen := map[string]struct{}{}
+	add := func(msg *gmailapi.Message) {
+		if msg == nil || msg.Id == "" {
+			return
+		}
+		if !hasLabel(msg.LabelIds, "CATEGORY_PERSONAL") {
+			return
+		}
+		if _, dup := seen[msg.Id]; dup {
+			return
+		}
+		seen[msg.Id] = struct{}{}
+		newIDs = append(newIDs, msg.Id)
+	}
+
 	for _, h := range resp.History {
 		for _, ma := range h.MessagesAdded {
-			if ma.Message == nil {
+			add(ma.Message)
+		}
+		for _, la := range h.LabelsAdded {
+			if !hasLabel(la.LabelIds, "INBOX") {
 				continue
 			}
-			if !hasLabel(ma.Message.LabelIds, "CATEGORY_PERSONAL") {
-				continue
-			}
-			newIDs = append(newIDs, ma.Message.Id)
+			add(la.Message)
 		}
 	}
 

@@ -121,6 +121,78 @@ func TestLatestMessageIDs_ReturnsInboxPrimaryAdds(t *testing.T) {
 	}
 }
 
+func TestLatestMessageIDs_IncludesLabelAddedForMovedToInbox(t *testing.T) {
+	// This covers the "moved from Spam to Inbox" case — Gmail reports a
+	// labelAdded event (not messageAdded) when a label is applied to an
+	// existing message.
+	histResp := map[string]any{
+		"history": []map[string]any{
+			{
+				"id": "100",
+				"labelsAdded": []map[string]any{
+					{
+						"message":  map[string]any{"id": "m4", "labelIds": []string{"INBOX", "CATEGORY_PERSONAL"}},
+						"labelIds": []string{"INBOX"},
+					},
+					{
+						"message":  map[string]any{"id": "m5", "labelIds": []string{"INBOX", "CATEGORY_PROMOTIONS"}},
+						"labelIds": []string{"INBOX"},
+					},
+				},
+			},
+		},
+		"historyId": "175",
+	}
+	b, _ := json.Marshal(histResp)
+
+	c, _ := setupClient(t, &gmailMock{historyJSON: string(b)})
+
+	ids, cursor, err := c.LatestMessageIDs(context.Background(), "1")
+	if err != nil {
+		t.Fatalf("call: %v", err)
+	}
+	if len(ids) != 1 || ids[0] != "m4" {
+		t.Fatalf("ids: %v, want [m4] (m5 is CATEGORY_PROMOTIONS, filtered)", ids)
+	}
+	if cursor != "175" {
+		t.Fatalf("cursor: %q, want 175", cursor)
+	}
+}
+
+func TestLatestMessageIDs_DeduplicatesAcrossAddedAndLabelAdded(t *testing.T) {
+	// A single email can appear in both messagesAdded (when first landed in
+	// INBOX) and labelsAdded (when e.g. a second label got added). It must
+	// only be enqueued once.
+	histResp := map[string]any{
+		"history": []map[string]any{
+			{
+				"id": "100",
+				"messagesAdded": []map[string]any{
+					{"message": map[string]any{"id": "dup-1", "labelIds": []string{"INBOX", "CATEGORY_PERSONAL"}}},
+				},
+				"labelsAdded": []map[string]any{
+					{
+						"message":  map[string]any{"id": "dup-1", "labelIds": []string{"INBOX", "CATEGORY_PERSONAL", "IMPORTANT"}},
+						"labelIds": []string{"IMPORTANT"},
+					},
+				},
+			},
+		},
+		"historyId": "180",
+	}
+	b, _ := json.Marshal(histResp)
+
+	c, _ := setupClient(t, &gmailMock{historyJSON: string(b)})
+
+	ids, _, err := c.LatestMessageIDs(context.Background(), "1")
+	if err != nil {
+		t.Fatalf("call: %v", err)
+	}
+	if len(ids) != 1 || ids[0] != "dup-1" {
+		t.Fatalf("ids: %v, want [dup-1] (deduplicated)", ids)
+	}
+}
+
 func TestLatestMessageIDs_EmptyHistory(t *testing.T) {
 	histResp := map[string]any{"historyId": "200"}
 	b, _ := json.Marshal(histResp)
