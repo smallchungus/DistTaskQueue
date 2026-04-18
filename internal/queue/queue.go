@@ -56,6 +56,14 @@ func (q *Queue) Depth(ctx context.Context, stage string) (int64, error) {
 // Client exposes the underlying Redis client. Test-only.
 func (q *Queue) Client() *goredis.Client { return q.cli }
 
+func (q *Queue) IsWorkerAlive(ctx context.Context, workerID string) (bool, error) {
+	n, err := q.cli.Exists(ctx, "heartbeat:"+workerID).Result()
+	if err != nil {
+		return false, fmt.Errorf("exists: %w", err)
+	}
+	return n > 0, nil
+}
+
 func (q *Queue) Heartbeat(ctx context.Context, workerID string, ttl time.Duration) error {
 	now := strconv.FormatInt(time.Now().Unix(), 10)
 	if err := q.cli.Set(ctx, "heartbeat:"+workerID, now, ttl).Err(); err != nil {
