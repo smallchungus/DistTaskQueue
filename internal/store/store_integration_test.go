@@ -23,6 +23,34 @@ func newStore(t *testing.T) *store.Store {
 	return store.New(pool)
 }
 
+func TestHasJobForMessage_DetectsExistingAndMissingMessages(t *testing.T) {
+	s := newStore(t)
+	ctx := context.Background()
+
+	u, err := s.CreateUser(ctx, "hjfm@example.com")
+	if err != nil {
+		t.Fatal(err)
+	}
+	msgID := "gmail-msg-42"
+	_, err = s.EnqueueJob(ctx, store.NewJob{
+		Stage:          "fetch",
+		UserID:         &u.ID,
+		GmailMessageID: &msgID,
+	})
+	if err != nil {
+		t.Fatal(err)
+	}
+
+	got, err := s.HasJobForMessage(ctx, u.ID, msgID)
+	if err != nil || !got {
+		t.Fatalf("existing msg: got=%v err=%v, want true nil", got, err)
+	}
+	got, err = s.HasJobForMessage(ctx, u.ID, "no-such-id")
+	if err != nil || got {
+		t.Fatalf("missing msg: got=%v err=%v, want false nil", got, err)
+	}
+}
+
 func TestEnqueueJob_PersistsRow(t *testing.T) {
 	s := newStore(t)
 	ctx := context.Background()

@@ -211,6 +211,121 @@ func TestLatestMessageIDs_EmptyHistory(t *testing.T) {
 	}
 }
 
+func TestListRecent_ReturnsMessageIDs(t *testing.T) {
+	// messages.list returns up to maxResults IDs filtered by labelIds + q.
+	// Backfill uses this to catch anything the History API missed.
+	listResp := map[string]any{
+		"messages": []map[string]any{
+			{"id": "a1"}, {"id": "a2"}, {"id": "a3"},
+		},
+		"resultSizeEstimate": 3,
+	}
+	b, _ := json.Marshal(listResp)
+
+	mux := http.NewServeMux()
+	var capturedQuery string
+	mux.HandleFunc("/gmail/v1/users/me/messages", func(w http.ResponseWriter, r *http.Request) {
+		capturedQuery = r.URL.RawQuery
+		w.Header().Set("Content-Type", "application/json")
+		_, _ = w.Write(b)
+	})
+	srv := httptest.NewServer(mux)
+	t.Cleanup(srv.Close)
+
+	pool := testutil.StartPostgres(t)
+	if err := store.Migrate(context.Background(), pool.Config().ConnString()); err != nil {
+		t.Fatalf("migrate: %v", err)
+	}
+	s := store.New(pool)
+	u, _ := s.CreateUser(context.Background(), fmt.Sprintf("lr+%d@example.com", time.Now().UnixNano()))
+	key := newKey32()
+	tok := &oauth2.Token{AccessToken: "x", RefreshToken: "y", Expiry: time.Now().Add(time.Hour)}
+	_ = oauth.SaveToken(context.Background(), s, u.ID, key, "google", tok)
+
+	c, _ := gmail.New(context.Background(), gmail.Config{
+		Store: s, UserID: u.ID, EncryptionKey: key,
+		OAuth2:   &oauth2.Config{ClientID: "x", ClientSecret: "y"},
+		Endpoint: srv.URL,
+	})
+
+	since := time.Unix(1700000000, 0).UTC()
+	ids, err := c.ListRecent(context.Background(), since)
+	if err != nil {
+		t.Fatalf("list recent: %v", err)
+	}
+	if len(ids) != 3 || ids[0] != "a1" || ids[1] != "a2" || ids[2] != "a3" {
+		t.Fatalf("ids: %v, want [a1 a2 a3]", ids)
+	}
+	// Query must filter by INBOX + CATEGORY_PERSONAL + after:<unix-ts>.
+	if !containsAll(capturedQuery, "INBOX", "CATEGORY_PERSONAL", "after%3A1700000000") {
+		t.Fatalf("query did not include required filters: %q", capturedQuery)
+	}
+}
+
+func TestListRecent_PaginatesAcrossPages(t *testing.T) {
+	page1 := map[string]any{
+		"messages":      []map[string]any{{"id": "p1"}, {"id": "p2"}},
+		"nextPageToken": "TOK",
+	}
+	page2 := map[string]any{
+		"messages": []map[string]any{{"id": "p3"}},
+	}
+
+	mux := http.NewServeMux()
+	mux.HandleFunc("/gmail/v1/users/me/messages", func(w http.ResponseWriter, r *http.Request) {
+		w.Header().Set("Content-Type", "application/json")
+		if r.URL.Query().Get("pageToken") == "TOK" {
+			b, _ := json.Marshal(page2)
+			_, _ = w.Write(b)
+			return
+		}
+		b, _ := json.Marshal(page1)
+		_, _ = w.Write(b)
+	})
+	srv := httptest.NewServer(mux)
+	t.Cleanup(srv.Close)
+
+	pool := testutil.StartPostgres(t)
+	if err := store.Migrate(context.Background(), pool.Config().ConnString()); err != nil {
+		t.Fatalf("migrate: %v", err)
+	}
+	s := store.New(pool)
+	u, _ := s.CreateUser(context.Background(), fmt.Sprintf("pg+%d@example.com", time.Now().UnixNano()))
+	key := newKey32()
+	tok := &oauth2.Token{AccessToken: "x", RefreshToken: "y", Expiry: time.Now().Add(time.Hour)}
+	_ = oauth.SaveToken(context.Background(), s, u.ID, key, "google", tok)
+
+	c, _ := gmail.New(context.Background(), gmail.Config{
+		Store: s, UserID: u.ID, EncryptionKey: key,
+		OAuth2:   &oauth2.Config{ClientID: "x", ClientSecret: "y"},
+		Endpoint: srv.URL,
+	})
+
+	ids, err := c.ListRecent(context.Background(), time.Unix(1700000000, 0).UTC())
+	if err != nil {
+		t.Fatalf("list recent: %v", err)
+	}
+	if len(ids) != 3 || ids[0] != "p1" || ids[1] != "p2" || ids[2] != "p3" {
+		t.Fatalf("ids: %v, want [p1 p2 p3]", ids)
+	}
+}
+
+func containsAll(s string, subs ...string) bool {
+	for _, sub := range subs {
+		found := false
+		for i := 0; i+len(sub) <= len(s); i++ {
+			if s[i:i+len(sub)] == sub {
+				found = true
+				break
+			}
+		}
+		if !found {
+			return false
+		}
+	}
+	return true
+}
+
 func TestFetchMessage_DecodesRawBase64(t *testing.T) {
 	rawMime := "From: alice@example.com\r\nSubject: hi\r\n\r\nbody"
 	rawB64 := base64URL(rawMime)

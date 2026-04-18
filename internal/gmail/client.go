@@ -5,6 +5,7 @@ import (
 	"encoding/base64"
 	"fmt"
 	"strconv"
+	"time"
 
 	"github.com/google/uuid"
 	"golang.org/x/oauth2"
@@ -103,6 +104,37 @@ func (c *Client) LatestMessageIDs(ctx context.Context, lastHistoryID string) (ne
 		cursor = strconv.FormatUint(resp.HistoryId, 10)
 	}
 	return newIDs, cursor, nil
+}
+
+// ListRecent returns INBOX/Primary message IDs with an internal Gmail date
+// >= since. Backfill safety net — catches what the History API missed if the
+// cursor fell behind. Paginates transparently.
+func (c *Client) ListRecent(ctx context.Context, since time.Time) ([]string, error) {
+	query := fmt.Sprintf("after:%d", since.Unix())
+	var ids []string
+	var pageToken string
+	for {
+		call := c.svc.Users.Messages.List("me").
+			LabelIds("INBOX", "CATEGORY_PERSONAL").
+			Q(query).
+			Context(ctx)
+		if pageToken != "" {
+			call = call.PageToken(pageToken)
+		}
+		resp, err := call.Do()
+		if err != nil {
+			return nil, fmt.Errorf("messages list: %w", err)
+		}
+		for _, m := range resp.Messages {
+			if m != nil && m.Id != "" {
+				ids = append(ids, m.Id)
+			}
+		}
+		if resp.NextPageToken == "" {
+			return ids, nil
+		}
+		pageToken = resp.NextPageToken
+	}
 }
 
 func (c *Client) FetchMessage(ctx context.Context, messageID string) ([]byte, error) {

@@ -15,6 +15,7 @@ import (
 	"golang.org/x/oauth2"
 	"golang.org/x/oauth2/google"
 
+	"github.com/smallchungus/disttaskqueue/internal/backfill"
 	"github.com/smallchungus/disttaskqueue/internal/queue"
 	"github.com/smallchungus/disttaskqueue/internal/scheduler"
 	"github.com/smallchungus/disttaskqueue/internal/store"
@@ -58,24 +59,42 @@ func main() {
 	redis := goredis.NewClient(opts)
 	defer func() { _ = redis.Close() }()
 
+	oauthCfg := &oauth2.Config{
+		ClientID:     clientID,
+		ClientSecret: clientSecret,
+		Endpoint:     google.Endpoint,
+		Scopes:       []string{"https://www.googleapis.com/auth/gmail.readonly", "https://www.googleapis.com/auth/drive.file"},
+	}
+	s := store.New(pool)
+	q := queue.New(redis)
+
 	sch := scheduler.New(scheduler.Config{
-		Store:         store.New(pool),
-		Queue:         queue.New(redis),
+		Store:         s,
+		Queue:         q,
 		EncryptionKey: key,
-		OAuth2: &oauth2.Config{
-			ClientID:     clientID,
-			ClientSecret: clientSecret,
-			Endpoint:     google.Endpoint,
-			Scopes:       []string{"https://www.googleapis.com/auth/gmail.readonly", "https://www.googleapis.com/auth/drive.file"},
-		},
-		Interval: time.Duration(envIntOr("SCHEDULER_POLL_INTERVAL_SEC", 300)) * time.Second,
+		OAuth2:        oauthCfg,
+		Interval:      time.Duration(envIntOr("SCHEDULER_POLL_INTERVAL_SEC", 60)) * time.Second,
+	})
+	bf := backfill.New(backfill.Config{
+		Store:         s,
+		Queue:         q,
+		EncryptionKey: key,
+		OAuth2:        oauthCfg,
+		Interval:      time.Duration(envIntOr("BACKFILL_INTERVAL_SEC", 3600)) * time.Second,
+		Window:        time.Duration(envIntOr("BACKFILL_WINDOW_HOURS", 24)) * time.Hour,
 	})
 
 	slog.Info("scheduler starting")
-	if err := sch.Run(ctx); err != nil {
+	errCh := make(chan error, 2)
+	go func() { errCh <- sch.Run(ctx) }()
+	go func() { errCh <- bf.Run(ctx) }()
+	// Wait for either goroutine to return. scheduler.Run and backfill.Run both
+	// exit cleanly on ctx cancellation, so the first error here is the real one.
+	if err := <-errCh; err != nil {
 		slog.Error("scheduler run", "err", err)
 		os.Exit(1)
 	}
+	<-errCh
 	slog.Info("scheduler stopped")
 }
 

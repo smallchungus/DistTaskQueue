@@ -58,3 +58,20 @@ func (s *Store) SetGmailSyncState(ctx context.Context, userID uuid.UUID, history
 	}
 	return nil
 }
+
+// HasJobForMessage returns true if a pipeline_jobs row already exists for
+// (user_id, gmail_message_id) in ANY status. Backfill uses this as the
+// idempotency check before re-enqueueing a message the scheduler already
+// knows about.
+func (s *Store) HasJobForMessage(ctx context.Context, userID uuid.UUID, gmailMessageID string) (bool, error) {
+	const q = `SELECT 1 FROM pipeline_jobs WHERE user_id = $1 AND gmail_message_id = $2 LIMIT 1`
+	var one int
+	err := s.pool.QueryRow(ctx, q, userID, gmailMessageID).Scan(&one)
+	if errors.Is(err, pgx.ErrNoRows) {
+		return false, nil
+	}
+	if err != nil {
+		return false, fmt.Errorf("has job for message: %w", err)
+	}
+	return true, nil
+}
