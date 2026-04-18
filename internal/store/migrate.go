@@ -21,7 +21,7 @@ func Migrate(ctx context.Context, dsn string) error {
 		return fmt.Errorf("parse dsn: %w", err)
 	}
 	db := stdlib.OpenDB(*cfg)
-	defer db.Close()
+	defer func() { _ = db.Close() }()
 
 	driver, err := pgxdriver.WithInstance(db, &pgxdriver.Config{})
 	if err != nil {
