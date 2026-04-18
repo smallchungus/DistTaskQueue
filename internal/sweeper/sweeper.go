@@ -11,9 +11,10 @@ import (
 )
 
 type Config struct {
-	Store    *store.Store
-	Queue    *queue.Queue
-	Interval time.Duration
+	Store          *store.Store
+	Queue          *queue.Queue
+	Interval       time.Duration
+	StaleThreshold time.Duration
 }
 
 type Sweeper struct {
@@ -23,6 +24,9 @@ type Sweeper struct {
 func New(cfg Config) *Sweeper {
 	if cfg.Interval == 0 {
 		cfg.Interval = 5 * time.Second
+	}
+	if cfg.StaleThreshold == 0 {
+		cfg.StaleThreshold = 60 * time.Second
 	}
 	return &Sweeper{cfg: cfg}
 }
@@ -50,6 +54,9 @@ func (s *Sweeper) SweepOnce(ctx context.Context) error {
 	if err := s.promoteDelayed(ctx); err != nil {
 		return fmt.Errorf("promote delayed: %w", err)
 	}
+	if err := s.repushStale(ctx); err != nil {
+		return fmt.Errorf("repush stale: %w", err)
+	}
 	return nil
 }
 
@@ -75,6 +82,21 @@ func (s *Sweeper) reviveOrphans(ctx context.Context) error {
 			continue
 		}
 		slog.Info("revived orphan", "job_id", j.ID, "worker_id", *j.WorkerID)
+	}
+	return nil
+}
+
+func (s *Sweeper) repushStale(ctx context.Context) error {
+	stale, err := s.cfg.Store.ListStaleQueuedJobs(ctx, s.cfg.StaleThreshold)
+	if err != nil {
+		return err
+	}
+	for _, j := range stale {
+		if err := s.cfg.Queue.Push(ctx, j.Stage, j.ID.String()); err != nil {
+			slog.Warn("repush stale failed", "job_id", j.ID, "err", err)
+			continue
+		}
+		slog.Info("repushed stale queued job", "job_id", j.ID, "stage", j.Stage)
 	}
 	return nil
 }

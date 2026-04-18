@@ -101,6 +101,51 @@ func TestSweepOnce_PromotesDelayedRetryToRedisQueue(t *testing.T) {
 	}
 }
 
+func TestSweepOnce_RepushesStaleQueuedJob(t *testing.T) {
+	s, q, sw := setup(t)
+	ctx := context.Background()
+
+	job, _ := s.EnqueueJob(ctx, store.NewJob{Stage: "fetch"})
+	_, _ = s.PoolForTest().Exec(ctx, //nolint:gosec
+		`UPDATE pipeline_jobs SET created_at = now() - interval '5 minutes' WHERE id = $1`,
+		job.ID,
+	)
+
+	depthBefore, _ := q.Depth(ctx, "fetch")
+	if err := sw.SweepOnce(ctx); err != nil {
+		t.Fatalf("sweep: %v", err)
+	}
+	depthAfter, _ := q.Depth(ctx, "fetch")
+
+	if depthAfter != depthBefore+1 {
+		t.Fatalf("depth: before=%d after=%d, want +1", depthBefore, depthAfter)
+	}
+	popped, err := q.BlockingPop(ctx, "fetch", 1*time.Second)
+	if err != nil {
+		t.Fatalf("pop: %v", err)
+	}
+	if popped != job.ID.String() {
+		t.Fatalf("popped %q, want %q", popped, job.ID.String())
+	}
+}
+
+func TestSweepOnce_LeavesFreshlyQueuedJobAlone(t *testing.T) {
+	s, q, sw := setup(t)
+	ctx := context.Background()
+
+	_, _ = s.EnqueueJob(ctx, store.NewJob{Stage: "fetch"})
+	depthBefore, _ := q.Depth(ctx, "fetch")
+
+	if err := sw.SweepOnce(ctx); err != nil {
+		t.Fatalf("sweep: %v", err)
+	}
+	depthAfter, _ := q.Depth(ctx, "fetch")
+
+	if depthAfter != depthBefore {
+		t.Fatalf("fresh job got re-pushed: before=%d after=%d", depthBefore, depthAfter)
+	}
+}
+
 func TestSweepOnce_LeavesFutureRetryInPostgresOnly(t *testing.T) {
 	s, q, sw := setup(t)
 	ctx := context.Background()
