@@ -8,6 +8,7 @@ import (
 	"os"
 	"path"
 	"path/filepath"
+	"strings"
 	"time"
 
 	goredis "github.com/redis/go-redis/v9"
@@ -24,7 +25,13 @@ type UploadConfig struct {
 	DriveEndpoint string
 	Redis         *goredis.Client
 	DataDir       string
-	RootFolderID  string
+	// RootFolderID is the starting Drive folder ID. If empty, defaults to "root"
+	// (the user's My Drive root).
+	RootFolderID string
+	// RootPath is an optional slash-delimited folder path under RootFolderID
+	// that gets created/resolved once and used as the parent of the date tree.
+	// Example: "02_GmailBackup/DistTaskQueue Backup".
+	RootPath string
 }
 
 type UploadHandler struct {
@@ -66,9 +73,24 @@ func (h *UploadHandler) Process(ctx context.Context, job store.Job) (string, err
 		return "", fmt.Errorf("drive client: %w", err)
 	}
 
-	// Walk date-tree + email folder.
-	folders := append(DateTreeFolders(meta.ReceivedAt), EmailFolderName(meta.ReceivedAt, meta.Subject, meta.FromEmail))
+	// Walk the full folder chain: [prefix (from RootPath)...] + YYYY/MM/DD/<email-folder>.
+	// Starting parent is RootFolderID, or "root" (Drive alias for My Drive root).
 	parent := h.cfg.RootFolderID
+	if parent == "" {
+		parent = "root"
+	}
+
+	var folders []string
+	if h.cfg.RootPath != "" {
+		for _, p := range strings.Split(h.cfg.RootPath, "/") {
+			if p = strings.TrimSpace(p); p != "" {
+				folders = append(folders, p)
+			}
+		}
+	}
+	folders = append(folders, DateTreeFolders(meta.ReceivedAt)...)
+	folders = append(folders, EmailFolderName(meta.ReceivedAt, meta.Subject, meta.FromEmail))
+
 	pathSoFar := ""
 	for _, f := range folders {
 		if pathSoFar == "" {

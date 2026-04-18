@@ -8,8 +8,8 @@ import (
 )
 
 func TestDateTreeFolders(t *testing.T) {
-	got := DateTreeFolders(time.Date(2026, 4, 17, 10, 30, 0, 0, time.UTC))
-	want := []string{"2026", "04", "17"}
+	got := DateTreeFolders(time.Date(2026, 4, 18, 10, 30, 0, 0, time.UTC))
+	want := []string{"2026", "April 2026", "18 April 2026 (Saturday)"}
 	if !reflect.DeepEqual(got, want) {
 		t.Fatalf("got %v, want %v", got, want)
 	}
@@ -50,7 +50,25 @@ func TestFromSlug_UsesLocalPart(t *testing.T) {
 func TestEmailFolderName_FormatsCorrectly(t *testing.T) {
 	tm := time.Date(2026, 4, 18, 10, 30, 45, 0, time.UTC)
 	got := EmailFolderName(tm, "Re: project update", "alice@example.com")
-	want := "2026-04-18_103045_re-project-update_alice"
+	want := "Re: project update - alice@example.com (10:30)"
+	if got != want {
+		t.Fatalf("got %q, want %q", got, want)
+	}
+}
+
+func TestEmailFolderName_SanitizesWeirdChars(t *testing.T) {
+	tm := time.Date(2026, 4, 18, 10, 30, 0, 0, time.UTC)
+	got := EmailFolderName(tm, "Subject with / slash and  extra    spaces", "bob@example.com")
+	want := "Subject with slash and extra spaces - bob@example.com (10:30)"
+	if got != want {
+		t.Fatalf("got %q, want %q", got, want)
+	}
+}
+
+func TestEmailFolderName_EmptySubjectFallback(t *testing.T) {
+	tm := time.Date(2026, 4, 18, 10, 30, 0, 0, time.UTC)
+	got := EmailFolderName(tm, "   ", "alice@example.com")
+	want := "(no subject) - alice@example.com (10:30)"
 	if got != want {
 		t.Fatalf("got %q, want %q", got, want)
 	}

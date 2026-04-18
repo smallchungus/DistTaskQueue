@@ -7,23 +7,88 @@ import (
 	"unicode"
 )
 
-// DateTreeFolders returns the year/month/day folder names for the given time.
+// DateTreeFolders returns human-readable year / month / day folder names for
+// the given time. Format:
+//
+//	["2026", "April 2026", "18 April 2026 (Saturday)"]
+//
+// Year stays a 4-digit number so it sorts correctly under the root. Month and
+// day folders embed the full name + year for readability when browsing Drive.
 func DateTreeFolders(t time.Time) []string {
 	t = t.UTC()
+	month := t.Month().String()
+	weekday := t.Weekday().String()
 	return []string{
 		fmt.Sprintf("%04d", t.Year()),
-		fmt.Sprintf("%02d", int(t.Month())),
-		fmt.Sprintf("%02d", t.Day()),
+		fmt.Sprintf("%s %04d", month, t.Year()),
+		fmt.Sprintf("%d %s %04d (%s)", t.Day(), month, t.Year(), weekday),
 	}
 }
 
 const (
-	maxSubjectSlugLen = 40
-	maxFilenameLen    = 200
+	maxSubjectFolderLen = 80
+	maxFilenameLen      = 200
 )
 
-// SubjectSlug lowercases, replaces non-alphanumeric with '-', collapses runs,
-// trims dashes, and caps length. Empty input becomes "untitled".
+// EmailFolderName returns the per-email folder name used inside the day folder.
+// Format: "<subject> - <sender> (HH:MM)". The time suffix disambiguates
+// folders when two emails share a subject + sender in the same day.
+// Subject is sanitized (illegal Drive chars stripped, whitespace collapsed)
+// and truncated. Original casing and spaces preserved.
+func EmailFolderName(receivedAt time.Time, subject, fromEmail string) string {
+	t := receivedAt.UTC()
+	subj := cleanSubject(subject)
+	sender := strings.TrimSpace(fromEmail)
+	if sender == "" {
+		sender = "unknown sender"
+	}
+	return fmt.Sprintf("%s - %s (%02d:%02d)", subj, sender, t.Hour(), t.Minute())
+}
+
+// cleanSubject strips chars illegal in Drive folder names, collapses whitespace,
+// strips leading/trailing punctuation, and caps length. Preserves casing.
+// Empty or all-illegal input becomes "(no subject)".
+func cleanSubject(s string) string {
+	s = strings.TrimSpace(s)
+	if s == "" {
+		return "(no subject)"
+	}
+
+	var b strings.Builder
+	b.Grow(len(s))
+	lastSpace := false
+	for _, r := range s {
+		switch r {
+		case 0, '/', '\\':
+			if !lastSpace {
+				b.WriteByte(' ')
+				lastSpace = true
+			}
+		default:
+			if unicode.IsSpace(r) {
+				if !lastSpace {
+					b.WriteByte(' ')
+					lastSpace = true
+				}
+				continue
+			}
+			b.WriteRune(r)
+			lastSpace = false
+		}
+	}
+	out := strings.TrimSpace(b.String())
+	out = strings.Trim(out, ".-_")
+	if out == "" {
+		return "(no subject)"
+	}
+	if len(out) > maxSubjectFolderLen {
+		out = strings.TrimSpace(out[:maxSubjectFolderLen])
+	}
+	return out
+}
+
+// SubjectSlug is retained for legacy callers / tests. New code should prefer
+// the human-readable cleanSubject path used by EmailFolderName.
 func SubjectSlug(s string) string {
 	s = strings.ToLower(strings.TrimSpace(s))
 	if s == "" {
@@ -32,7 +97,7 @@ func SubjectSlug(s string) string {
 
 	var b strings.Builder
 	b.Grow(len(s))
-	lastDash := true // strip leading dashes
+	lastDash := true
 	for _, r := range s {
 		if unicode.IsLetter(r) || unicode.IsDigit(r) {
 			b.WriteRune(r)
@@ -48,14 +113,13 @@ func SubjectSlug(s string) string {
 	if out == "" {
 		return "untitled"
 	}
-	if len(out) > maxSubjectSlugLen {
-		out = strings.TrimRight(out[:maxSubjectSlugLen], "-")
+	if len(out) > 40 {
+		out = strings.TrimRight(out[:40], "-")
 	}
 	return out
 }
 
-// FromSlug extracts the local part from an email address, lowercases it, and
-// replaces '+' and '.' with '-' for readability.
+// FromSlug is retained for legacy callers / tests.
 func FromSlug(email string) string {
 	if email == "" {
 		return "unknown"
@@ -68,18 +132,6 @@ func FromSlug(email string) string {
 	local = strings.ReplaceAll(local, "+", "-")
 	local = strings.ReplaceAll(local, ".", "-")
 	return local
-}
-
-// EmailFolderName returns the per-email folder name used inside the date tree.
-// Format: "<YYYY-MM-DD>_<HHMMSS>_<subject-slug>_<from-slug>".
-func EmailFolderName(receivedAt time.Time, subject, fromEmail string) string {
-	t := receivedAt.UTC()
-	return fmt.Sprintf("%04d-%02d-%02d_%02d%02d%02d_%s_%s",
-		t.Year(), int(t.Month()), t.Day(),
-		t.Hour(), t.Minute(), t.Second(),
-		SubjectSlug(subject),
-		FromSlug(fromEmail),
-	)
 }
 
 // SanitizeFilename replaces path separators and null bytes with '-', collapses

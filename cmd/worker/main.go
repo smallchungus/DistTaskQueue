@@ -85,6 +85,7 @@ func main() {
 			Redis:         redis,
 			DataDir:       envOr("DATA_DIR", "/data"),
 			RootFolderID:  envOr("DRIVE_ROOT_FOLDER_ID", ""),
+			RootPath:      envOr("DRIVE_ROOT_PATH", ""),
 		})
 	default:
 		slog.Error("unknown stage", "stage", *stage)

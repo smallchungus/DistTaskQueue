@@ -1,0 +1,225 @@
+<!DOCTYPE html>
+<html lang="en">
+<head>
+<meta charset="utf-8">
+<title>DistTaskQueue — dashboard</title>
+<style>
+  :root {
+    --bg: #0e1116;
+    --fg: #e6edf3;
+    --muted: #7d8590;
+    --border: #30363d;
+    --queued: #d29922;
+    --running: #1f6feb;
+    --done: #2ea043;
+    --dead: #f85149;
+    --card: #161b22;
+  }
+  * { box-sizing: border-box; }
+  body {
+    margin: 0;
+    font-family: -apple-system, BlinkMacSystemFont, "Segoe UI", sans-serif;
+    background: var(--bg);
+    color: var(--fg);
+    padding: 20px 32px;
+  }
+  h1 {
+    font-size: 20px;
+    font-weight: 600;
+    margin: 0 0 4px;
+  }
+  .subtitle {
+    color: var(--muted);
+    font-size: 13px;
+    margin: 0 0 24px;
+  }
+  .grid {
+    display: grid;
+    grid-template-columns: repeat(3, 1fr);
+    gap: 16px;
+    margin-bottom: 24px;
+  }
+  .card {
+    background: var(--card);
+    border: 1px solid var(--border);
+    border-radius: 6px;
+    padding: 14px 18px;
+  }
+  .card h2 {
+    font-size: 11px;
+    text-transform: uppercase;
+    letter-spacing: 0.5px;
+    color: var(--muted);
+    margin: 0 0 8px;
+  }
+  .metric-row {
+    display: flex;
+    gap: 20px;
+    flex-wrap: wrap;
+  }
+  .metric {
+    display: flex;
+    flex-direction: column;
+  }
+  .metric .value {
+    font-size: 24px;
+    font-weight: 600;
+    font-variant-numeric: tabular-nums;
+  }
+  .metric .label {
+    font-size: 11px;
+    color: var(--muted);
+    text-transform: uppercase;
+    letter-spacing: 0.3px;
+  }
+  .status {
+    display: inline-block;
+    padding: 2px 8px;
+    border-radius: 10px;
+    font-size: 11px;
+    font-weight: 500;
+    text-transform: uppercase;
+    letter-spacing: 0.3px;
+  }
+  .status.queued { background: rgba(210, 153, 34, 0.2); color: var(--queued); }
+  .status.running { background: rgba(31, 111, 235, 0.2); color: var(--running); }
+  .status.done { background: rgba(46, 160, 67, 0.2); color: var(--done); }
+  .status.dead { background: rgba(248, 81, 73, 0.2); color: var(--dead); }
+  table {
+    width: 100%;
+    border-collapse: collapse;
+    background: var(--card);
+    border: 1px solid var(--border);
+    border-radius: 6px;
+    overflow: hidden;
+  }
+  th, td {
+    text-align: left;
+    padding: 10px 14px;
+    font-size: 13px;
+    border-bottom: 1px solid var(--border);
+  }
+  th {
+    background: #1c232b;
+    color: var(--muted);
+    font-weight: 500;
+    text-transform: uppercase;
+    font-size: 11px;
+    letter-spacing: 0.3px;
+  }
+  tr:last-child td { border-bottom: none; }
+  td.mono { font-family: ui-monospace, SFMono-Regular, Menlo, monospace; font-size: 12px; color: var(--muted); }
+  td.err { color: var(--dead); font-size: 12px; }
+  .workers {
+    font-family: ui-monospace, SFMono-Regular, Menlo, monospace;
+    font-size: 12px;
+    color: var(--muted);
+    word-break: break-all;
+  }
+  .workers .live {
+    color: var(--done);
+  }
+  .footer {
+    margin-top: 20px;
+    color: var(--muted);
+    font-size: 12px;
+  }
+</style>
+</head>
+<body>
+<h1>DistTaskQueue</h1>
+<p class="subtitle">Gmail → PDF → Drive pipeline • auto-refreshes every 2s</p>
+
+<div class="grid">
+  <div class="card">
+    <h2>Queue depths</h2>
+    <div class="metric-row">
+      <div class="metric"><span class="value" id="qd-fetch">—</span><span class="label">fetch</span></div>
+      <div class="metric"><span class="value" id="qd-render">—</span><span class="label">render</span></div>
+      <div class="metric"><span class="value" id="qd-upload">—</span><span class="label">upload</span></div>
+    </div>
+  </div>
+  <div class="card">
+    <h2>Job counts</h2>
+    <div class="metric-row">
+      <div class="metric"><span class="value" id="jc-queued">—</span><span class="label">queued</span></div>
+      <div class="metric"><span class="value" id="jc-running">—</span><span class="label">running</span></div>
+      <div class="metric"><span class="value" id="jc-done">—</span><span class="label">done</span></div>
+      <div class="metric"><span class="value" id="jc-dead">—</span><span class="label">dead</span></div>
+    </div>
+  </div>
+  <div class="card">
+    <h2>Live workers</h2>
+    <div class="workers live" id="workers">—</div>
+  </div>
+</div>
+
+<table>
+  <thead>
+    <tr>
+      <th>Job ID</th>
+      <th>Stage</th>
+      <th>Status</th>
+      <th>Attempts</th>
+      <th>Gmail msg</th>
+      <th>Created</th>
+      <th>Error</th>
+    </tr>
+  </thead>
+  <tbody id="jobs"><tr><td colspan="7" style="color: var(--muted)">loading…</td></tr></tbody>
+</table>
+
+<div class="footer" id="footer">—</div>
+
+<script>
+  const elem = (id) => document.getElementById(id);
+  const fmtTime = (iso) => {
+    if (!iso) return '—';
+    const d = new Date(iso);
+    const diffSec = Math.floor((Date.now() - d.getTime()) / 1000);
+    if (diffSec < 60) return diffSec + 's ago';
+    if (diffSec < 3600) return Math.floor(diffSec / 60) + 'm ago';
+    return Math.floor(diffSec / 3600) + 'h ago';
+  };
+
+  async function refresh() {
+    try {
+      const [sRes, jRes] = await Promise.all([
+        fetch('/api/stats').then(r => r.json()),
+        fetch('/api/jobs/recent?limit=20').then(r => r.json()),
+      ]);
+
+      elem('qd-fetch').textContent = sRes.queue_depths.fetch ?? 0;
+      elem('qd-render').textContent = sRes.queue_depths.render ?? 0;
+      elem('qd-upload').textContent = sRes.queue_depths.upload ?? 0;
+      elem('jc-queued').textContent = sRes.job_counts.queued ?? 0;
+      elem('jc-running').textContent = sRes.job_counts.running ?? 0;
+      elem('jc-done').textContent = sRes.job_counts.done ?? 0;
+      elem('jc-dead').textContent = sRes.job_counts.dead ?? 0;
+      elem('workers').textContent = (sRes.alive_workers && sRes.alive_workers.length)
+        ? sRes.alive_workers.join(' · ') : '(none)';
+
+      const rows = (jRes.jobs || []).map(j => `
+        <tr>
+          <td class="mono">${j.id.slice(0, 8)}</td>
+          <td>${j.stage}</td>
+          <td><span class="status ${j.status}">${j.status}</span></td>
+          <td>${j.attempts}</td>
+          <td class="mono">${j.gmail_message_id || '—'}</td>
+          <td class="mono">${fmtTime(j.created_at)}</td>
+          <td class="err">${j.last_error || ''}</td>
+        </tr>
+      `).join('');
+      elem('jobs').innerHTML = rows || '<tr><td colspan="7" style="color: var(--muted)">(no jobs yet)</td></tr>';
+
+      elem('footer').textContent = 'last refreshed ' + new Date().toLocaleTimeString();
+    } catch (err) {
+      elem('footer').textContent = 'error: ' + err.message;
+    }
+  }
+
+  refresh();
+  setInterval(refresh, 2000);
+</script>
+</body>
+</html>
