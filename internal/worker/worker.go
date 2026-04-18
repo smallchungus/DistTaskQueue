@@ -74,7 +74,7 @@ func (w *Worker) ProcessOne(ctx context.Context) (didWork bool, err error) {
 	hbCtx, hbCancel := context.WithCancel(ctx)
 	go w.heartbeatLoop(hbCtx)
 
-	handlerErr := w.cfg.Handler.Process(ctx, job)
+	nextStage, handlerErr := w.cfg.Handler.Process(ctx, job)
 
 	hbCancel()
 
@@ -84,6 +84,17 @@ func (w *Worker) ProcessOne(ctx context.Context) (didWork bool, err error) {
 			return true, fmt.Errorf("mark failed: %w", err)
 		}
 		slog.Info("job failed, will retry", "job_id", jobID, "attempts", job.Attempts+1, "next_run", nextRun)
+		return true, nil
+	}
+
+	if nextStage != "" {
+		if err := w.cfg.Store.AdvanceJob(ctx, jobID, nextStage); err != nil {
+			return true, fmt.Errorf("advance: %w", err)
+		}
+		if err := w.cfg.Queue.Push(ctx, nextStage, jobID.String()); err != nil {
+			return true, fmt.Errorf("push next stage: %w", err)
+		}
+		slog.Info("job advanced", "job_id", jobID, "from", job.Stage, "to", nextStage)
 		return true, nil
 	}
 

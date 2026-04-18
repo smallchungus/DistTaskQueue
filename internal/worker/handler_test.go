@@ -15,7 +15,7 @@ func TestNoopHandler_SleepsThenReturnsNil(t *testing.T) {
 	job := store.Job{ID: uuid.New(), Payload: json.RawMessage(`{"sleepMs":50}`)}
 
 	start := time.Now()
-	err := h.Process(context.Background(), job)
+	_, err := h.Process(context.Background(), job)
 	elapsed := time.Since(start)
 
 	if err != nil {
@@ -31,7 +31,7 @@ func TestNoopHandler_DefaultsToZeroSleep(t *testing.T) {
 	job := store.Job{ID: uuid.New(), Payload: json.RawMessage(`{}`)}
 
 	start := time.Now()
-	if err := h.Process(context.Background(), job); err != nil {
+	if _, err := h.Process(context.Background(), job); err != nil {
 		t.Fatal(err)
 	}
 	if time.Since(start) > 50*time.Millisecond {
