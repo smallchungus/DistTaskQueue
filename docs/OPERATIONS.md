@@ -66,7 +66,15 @@ Every binary is 12-factor. No file-based config.
 
 ### scheduler (`cmd/scheduler`)
 
-Same required vars; no scheduler-specific tuning today. Poll interval is 5 min hardcoded.
+Runs two loops in one binary: the primary Gmail History poll, and a secondary safety backfill.
+
+| Var | Default | Notes |
+|---|---|---|
+| `SCHEDULER_POLL_INTERVAL_SEC` | `60` | Primary loop. Calls Gmail History API per user, enqueues fetch jobs for new messages. Short interval is safe — History API is cheap. |
+| `BACKFILL_INTERVAL_SEC` | `3600` | Secondary loop. Safety net against History-cursor misses (e.g., cursor initialized after emails arrived). Set to `0` to disable. |
+| `BACKFILL_WINDOW_HOURS` | `24` | How far back `messages.list` looks each backfill tick. Raise cautiously — pulls the whole window every tick. |
+
+Backfill is idempotent: for each candidate message ID it calls `HasJobForMessage` on `pipeline_jobs` (any status) and only enqueues what's unknown. Log line per run: `backfill user done candidates=N enqueued=K skipped=M`.
 
 ### oauth-setup (`cmd/oauth-setup`)
 
