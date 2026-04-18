@@ -27,6 +27,9 @@ spec:
             - name: DRIVE_ROOT_FOLDER_ID
               valueFrom:
                 configMapKeyRef: { name: dtq-config, key: DRIVE_ROOT_FOLDER_ID, optional: true }
+            - name: DRIVE_ROOT_PATH
+              valueFrom:
+                configMapKeyRef: { name: dtq-config, key: DRIVE_ROOT_PATH, optional: true }
             - name: GOOGLE_OAUTH_CLIENT_ID
               valueFrom:
                 secretKeyRef: { name: dtq-secrets, key: GOOGLE_OAUTH_CLIENT_ID }

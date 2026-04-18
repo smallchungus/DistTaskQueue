@@ -22,6 +22,7 @@ spec:
     metadata:
       labels: { app: gotenberg }
     spec:
+      enableServiceLinks: false
       containers:
         - name: gotenberg
           image: gotenberg/gotenberg:8

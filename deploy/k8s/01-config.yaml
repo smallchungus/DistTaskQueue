@@ -7,3 +7,5 @@ data:
   API_ADDR: ":8080"
   DATABASE_URL: "postgres://dtq:dtq@postgres:5432/dtq?sslmode=disable"
   REDIS_URL: "redis://redis:6379/0"
+  DRIVE_ROOT_FOLDER_ID: ""
+  DRIVE_ROOT_PATH: "02_GmailBackup/Gmail Backup"
