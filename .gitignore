@@ -12,6 +12,13 @@ vendor/
 coverage.out
 coverage.html
 
+# Built binaries landing in repo root (from `go build` without -o)
+/api
+/worker
+/sweeper
+/scheduler
+/oauth-setup
+
 # IDE / OS
 .vscode/
 .idea/
