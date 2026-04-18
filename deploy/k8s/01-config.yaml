@@ -1,0 +1,9 @@
+apiVersion: v1
+kind: ConfigMap
+metadata:
+  name: dtq-config
+  namespace: disttaskqueue
+data:
+  API_ADDR: ":8080"
+  DATABASE_URL: "postgres://dtq:dtq@postgres:5432/dtq?sslmode=disable"
+  REDIS_URL: "redis://redis:6379/0"
