@@ -1,0 +1,35 @@
+apiVersion: apps/v1
+kind: Deployment
+metadata:
+  name: scheduler
+  namespace: disttaskqueue
+spec:
+  replicas: 1
+  selector:
+    matchLabels: { app: scheduler }
+  template:
+    metadata:
+      labels: { app: scheduler }
+    spec:
+      imagePullSecrets:
+        - name: ghcr-pull
+      containers:
+        - name: scheduler
+          image: ghcr.io/smallchungus/disttaskqueue-api:latest
+          imagePullPolicy: Always
+          command: ["/scheduler"]
+          envFrom:
+            - configMapRef: { name: dtq-config }
+          env:
+            - name: GOOGLE_OAUTH_CLIENT_ID
+              valueFrom:
+                secretKeyRef: { name: dtq-secrets, key: GOOGLE_OAUTH_CLIENT_ID }
+            - name: GOOGLE_OAUTH_CLIENT_SECRET
+              valueFrom:
+                secretKeyRef: { name: dtq-secrets, key: GOOGLE_OAUTH_CLIENT_SECRET }
+            - name: TOKEN_ENCRYPTION_KEY
+              valueFrom:
+                secretKeyRef: { name: dtq-secrets, key: TOKEN_ENCRYPTION_KEY }
+          resources:
+            requests: { cpu: 20m, memory: 32Mi }
+            limits:   { cpu: 200m, memory: 128Mi }

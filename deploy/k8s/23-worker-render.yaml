@@ -1,0 +1,47 @@
+apiVersion: apps/v1
+kind: Deployment
+metadata:
+  name: worker-render
+  namespace: disttaskqueue
+spec:
+  replicas: 1
+  selector:
+    matchLabels: { app: worker-render }
+  template:
+    metadata:
+      labels: { app: worker-render }
+    spec:
+      imagePullSecrets:
+        - name: ghcr-pull
+      containers:
+        - name: worker
+          image: ghcr.io/smallchungus/disttaskqueue-api:latest
+          imagePullPolicy: Always
+          command: ["/worker"]
+          args: ["--stage=render"]
+          envFrom:
+            - configMapRef: { name: dtq-config }
+          env:
+            - name: DATA_DIR
+              value: /data
+            - name: GOTENBERG_URL
+              value: http://gotenberg:3000
+            - name: GOOGLE_OAUTH_CLIENT_ID
+              valueFrom:
+                secretKeyRef: { name: dtq-secrets, key: GOOGLE_OAUTH_CLIENT_ID }
+            - name: GOOGLE_OAUTH_CLIENT_SECRET
+              valueFrom:
+                secretKeyRef: { name: dtq-secrets, key: GOOGLE_OAUTH_CLIENT_SECRET }
+            - name: TOKEN_ENCRYPTION_KEY
+              valueFrom:
+                secretKeyRef: { name: dtq-secrets, key: TOKEN_ENCRYPTION_KEY }
+          volumeMounts:
+            - name: data
+              mountPath: /data
+          resources:
+            requests: { cpu: 100m, memory: 128Mi }
+            limits:   { cpu: 1000m, memory: 512Mi }
+      volumes:
+        - name: data
+          persistentVolumeClaim:
+            claimName: dtq-data

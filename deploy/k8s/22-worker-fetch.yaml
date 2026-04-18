@@ -1,0 +1,45 @@
+apiVersion: apps/v1
+kind: Deployment
+metadata:
+  name: worker-fetch
+  namespace: disttaskqueue
+spec:
+  replicas: 1
+  selector:
+    matchLabels: { app: worker-fetch }
+  template:
+    metadata:
+      labels: { app: worker-fetch }
+    spec:
+      imagePullSecrets:
+        - name: ghcr-pull
+      containers:
+        - name: worker
+          image: ghcr.io/smallchungus/disttaskqueue-api:latest
+          imagePullPolicy: Always
+          command: ["/worker"]
+          args: ["--stage=fetch"]
+          envFrom:
+            - configMapRef: { name: dtq-config }
+          env:
+            - name: DATA_DIR
+              value: /data
+            - name: GOOGLE_OAUTH_CLIENT_ID
+              valueFrom:
+                secretKeyRef: { name: dtq-secrets, key: GOOGLE_OAUTH_CLIENT_ID }
+            - name: GOOGLE_OAUTH_CLIENT_SECRET
+              valueFrom:
+                secretKeyRef: { name: dtq-secrets, key: GOOGLE_OAUTH_CLIENT_SECRET }
+            - name: TOKEN_ENCRYPTION_KEY
+              valueFrom:
+                secretKeyRef: { name: dtq-secrets, key: TOKEN_ENCRYPTION_KEY }
+          volumeMounts:
+            - name: data
+              mountPath: /data
+          resources:
+            requests: { cpu: 50m, memory: 64Mi }
+            limits:   { cpu: 500m, memory: 256Mi }
+      volumes:
+        - name: data
+          persistentVolumeClaim:
+            claimName: dtq-data

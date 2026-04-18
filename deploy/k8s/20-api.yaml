@@ -22,6 +22,8 @@ spec:
     metadata:
       labels: { app: api }
     spec:
+      imagePullSecrets:
+        - name: ghcr-pull
       containers:
         - name: api
           image: ghcr.io/smallchungus/disttaskqueue-api:latest

@@ -1,0 +1,25 @@
+apiVersion: apps/v1
+kind: Deployment
+metadata:
+  name: sweeper
+  namespace: disttaskqueue
+spec:
+  replicas: 1
+  selector:
+    matchLabels: { app: sweeper }
+  template:
+    metadata:
+      labels: { app: sweeper }
+    spec:
+      imagePullSecrets:
+        - name: ghcr-pull
+      containers:
+        - name: sweeper
+          image: ghcr.io/smallchungus/disttaskqueue-api:latest
+          imagePullPolicy: Always
+          command: ["/sweeper"]
+          envFrom:
+            - configMapRef: { name: dtq-config }
+          resources:
+            requests: { cpu: 20m, memory: 32Mi }
+            limits:   { cpu: 200m, memory: 128Mi }
