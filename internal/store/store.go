@@ -101,6 +101,49 @@ func (s *Store) MarkFailed(ctx context.Context, id uuid.UUID, errMsg string, nex
 	return nil
 }
 
+func (s *Store) ListRunningJobs(ctx context.Context) ([]Job, error) {
+	const q = `
+		SELECT id, stage, status, payload, worker_id, attempts, max_attempts,
+		       last_error, next_run_at, claimed_at, completed_at, created_at, updated_at
+		FROM pipeline_jobs WHERE status = $1`
+	rows, err := s.pool.Query(ctx, q, StatusRunning)
+	if err != nil {
+		return nil, fmt.Errorf("list running: %w", err)
+	}
+	defer rows.Close()
+	return scanJobs(rows)
+}
+
+func (s *Store) ListReadyRetryJobs(ctx context.Context) ([]Job, error) {
+	const q = `
+		SELECT id, stage, status, payload, worker_id, attempts, max_attempts,
+		       last_error, next_run_at, claimed_at, completed_at, created_at, updated_at
+		FROM pipeline_jobs
+		WHERE status = $1 AND last_error IS NOT NULL AND next_run_at <= now()`
+	rows, err := s.pool.Query(ctx, q, StatusQueued)
+	if err != nil {
+		return nil, fmt.Errorf("list ready retries: %w", err)
+	}
+	defer rows.Close()
+	return scanJobs(rows)
+}
+
+func scanJobs(rows pgx.Rows) ([]Job, error) {
+	var out []Job
+	for rows.Next() {
+		var j Job
+		if err := rows.Scan(&j.ID, &j.Stage, &j.Status, &j.Payload, &j.WorkerID, &j.Attempts,
+			&j.MaxAttempts, &j.LastError, &j.NextRunAt, &j.ClaimedAt, &j.CompletedAt, &j.CreatedAt, &j.UpdatedAt); err != nil {
+			return nil, fmt.Errorf("scan: %w", err)
+		}
+		out = append(out, j)
+	}
+	if err := rows.Err(); err != nil {
+		return nil, fmt.Errorf("rows: %w", err)
+	}
+	return out, nil
+}
+
 func (s *Store) GetJob(ctx context.Context, id uuid.UUID) (Job, error) {
 	const q = `
 		SELECT id, stage, status, payload, worker_id, attempts, max_attempts,

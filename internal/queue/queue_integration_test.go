@@ -82,6 +82,32 @@ func TestBlockingPop_ReturnsErrEmptyOnTimeout(t *testing.T) {
 	}
 }
 
+func TestIsWorkerAlive_TrueWhenHeartbeatSet(t *testing.T) {
+	q := newQueue(t)
+	ctx := context.Background()
+	if err := q.Heartbeat(ctx, "w1", 5*time.Second); err != nil {
+		t.Fatal(err)
+	}
+	alive, err := q.IsWorkerAlive(ctx, "w1")
+	if err != nil {
+		t.Fatal(err)
+	}
+	if !alive {
+		t.Fatal("expected alive=true")
+	}
+}
+
+func TestIsWorkerAlive_FalseWhenHeartbeatMissing(t *testing.T) {
+	q := newQueue(t)
+	alive, err := q.IsWorkerAlive(context.Background(), "never-lived")
+	if err != nil {
+		t.Fatal(err)
+	}
+	if alive {
+		t.Fatal("expected alive=false")
+	}
+}
+
 func TestHeartbeat_SetsKeyWithTTL(t *testing.T) {
 	q := newQueue(t)
 	cli := q.Client()
