@@ -5,6 +5,7 @@ import (
 	"encoding/json"
 	"errors"
 	"fmt"
+	"time"
 
 	"github.com/google/uuid"
 	"github.com/jackc/pgx/v5"
@@ -72,6 +73,27 @@ func (s *Store) MarkDone(ctx context.Context, id uuid.UUID) error {
 	tag, err := s.pool.Exec(ctx, q, StatusDone, id)
 	if err != nil {
 		return fmt.Errorf("mark done: %w", err)
+	}
+	if tag.RowsAffected() == 0 {
+		return ErrJobNotFound
+	}
+	return nil
+}
+
+func (s *Store) MarkFailed(ctx context.Context, id uuid.UUID, errMsg string, nextRunAt time.Time) error {
+	const q = `
+		UPDATE pipeline_jobs
+		SET attempts = attempts + 1,
+		    status = CASE WHEN attempts + 1 >= max_attempts THEN $1::text ELSE $2::text END,
+		    worker_id = NULL,
+		    last_error = $3,
+		    next_run_at = $4,
+		    updated_at = now()
+		WHERE id = $5`
+
+	tag, err := s.pool.Exec(ctx, q, StatusDead, StatusQueued, errMsg, nextRunAt, id)
+	if err != nil {
+		return fmt.Errorf("mark failed: %w", err)
 	}
 	if tag.RowsAffected() == 0 {
 		return ErrJobNotFound

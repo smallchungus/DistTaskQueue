@@ -7,6 +7,7 @@ import (
 	"encoding/json"
 	"errors"
 	"testing"
+	"time"
 
 	"github.com/google/uuid"
 	"github.com/smallchungus/disttaskqueue/internal/store"
@@ -115,5 +116,47 @@ func TestMarkDone_SetsTerminalState(t *testing.T) {
 	}
 	if got.CompletedAt == nil {
 		t.Fatalf("completed_at: nil")
+	}
+}
+
+func TestMarkFailed_RequeuesWithIncrementedAttempts(t *testing.T) {
+	s := newStore(t)
+	ctx := context.Background()
+	j, _ := s.EnqueueJob(ctx, store.NewJob{Stage: "test"})
+	_ = s.ClaimJob(ctx, j.ID, "worker-1")
+
+	nextRun := time.Now().Add(2 * time.Second)
+	if err := s.MarkFailed(ctx, j.ID, "transient boom", nextRun); err != nil {
+		t.Fatalf("fail: %v", err)
+	}
+
+	got, _ := s.GetJob(ctx, j.ID)
+	if got.Status != store.StatusQueued {
+		t.Fatalf("status: %s, want queued", got.Status)
+	}
+	if got.Attempts != 1 {
+		t.Fatalf("attempts: %d, want 1", got.Attempts)
+	}
+	if got.LastError == nil || *got.LastError != "transient boom" {
+		t.Fatalf("last_error: %v", got.LastError)
+	}
+	if got.WorkerID != nil {
+		t.Fatalf("worker_id: %v, want nil after fail", got.WorkerID)
+	}
+}
+
+func TestMarkFailed_MarksDeadAtMaxAttempts(t *testing.T) {
+	s := newStore(t)
+	ctx := context.Background()
+	j, _ := s.EnqueueJob(ctx, store.NewJob{Stage: "test"})
+
+	for i := 0; i < 8; i++ {
+		_ = s.ClaimJob(ctx, j.ID, "worker-1")
+		_ = s.MarkFailed(ctx, j.ID, "still broken", time.Now())
+	}
+
+	got, _ := s.GetJob(ctx, j.ID)
+	if got.Status != store.StatusDead {
+		t.Fatalf("status: %s, want dead", got.Status)
 	}
 }
