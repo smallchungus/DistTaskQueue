@@ -1,18 +1,12 @@
-package gmail
+package oauth
 
 import (
-	"context"
 	"errors"
 	"testing"
 	"time"
 
-	"github.com/google/uuid"
 	"golang.org/x/oauth2"
-
-	"github.com/smallchungus/disttaskqueue/internal/store"
 )
-
-type fakeStore struct{}
 
 type sequenceSource struct {
 	tokens []*oauth2.Token
@@ -38,7 +32,7 @@ func TestSavingSource_SavesWhenTokenChanges(t *testing.T) {
 
 	base := &sequenceSource{tokens: []*oauth2.Token{tok1, tok2}}
 	var saved []*oauth2.Token
-	src := newSavingSource(base, func(t *oauth2.Token) error {
+	src := NewSavingSource(base, func(t *oauth2.Token) error {
 		saved = append(saved, t)
 		return nil
 	}, tok1)
@@ -68,7 +62,7 @@ func TestSavingSource_SavesWhenTokenChanges(t *testing.T) {
 
 func TestSavingSource_PropagatesBaseError(t *testing.T) {
 	base := &sequenceSource{err: errors.New("refresh failed")}
-	src := newSavingSource(base, func(*oauth2.Token) error { return nil }, nil)
+	src := NewSavingSource(base, func(*oauth2.Token) error { return nil }, nil)
 	if _, err := src.Token(); err == nil {
 		t.Fatal("expected error")
 	}
@@ -85,11 +79,11 @@ func TestEncryptToken_DecryptToken_RoundTrip(t *testing.T) {
 		Expiry:       time.Now().Add(time.Hour).UTC().Truncate(time.Second),
 	}
 
-	accessCT, refreshCT, err := encryptToken(in, key)
+	accessCT, refreshCT, err := EncryptToken(in, key)
 	if err != nil {
 		t.Fatalf("encrypt: %v", err)
 	}
-	out, err := decryptToken(accessCT, refreshCT, in.Expiry, key)
+	out, err := DecryptToken(accessCT, refreshCT, in.Expiry, key)
 	if err != nil {
 		t.Fatalf("decrypt: %v", err)
 	}
@@ -97,8 +91,3 @@ func TestEncryptToken_DecryptToken_RoundTrip(t *testing.T) {
 		t.Fatalf("mismatch: %+v vs %+v", out, in)
 	}
 }
-
-var _ = fakeStore{}
-var _ = uuid.UUID{}
-var _ = context.Background()
-var _ = store.OAuthToken{}

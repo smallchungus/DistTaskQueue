@@ -11,6 +11,7 @@ import (
 	gmailapi "google.golang.org/api/gmail/v1"
 	"google.golang.org/api/option"
 
+	"github.com/smallchungus/disttaskqueue/internal/oauth"
 	"github.com/smallchungus/disttaskqueue/internal/store"
 )
 
@@ -30,14 +31,14 @@ type Client struct {
 }
 
 func New(ctx context.Context, cfg Config) (*Client, error) {
-	tok, err := LoadToken(ctx, cfg.Store, cfg.UserID, cfg.EncryptionKey)
+	tok, err := oauth.LoadToken(ctx, cfg.Store, cfg.UserID, cfg.EncryptionKey, "google")
 	if err != nil {
 		return nil, err
 	}
 
 	base := cfg.OAuth2.TokenSource(ctx, tok)
-	saving := newSavingSource(base, func(t *oauth2.Token) error {
-		return SaveToken(ctx, cfg.Store, cfg.UserID, cfg.EncryptionKey, t)
+	saving := oauth.NewSavingSource(base, func(t *oauth2.Token) error {
+		return oauth.SaveToken(ctx, cfg.Store, cfg.UserID, cfg.EncryptionKey, "google", t)
 	}, tok)
 	httpClient := oauth2.NewClient(ctx, saving)
 

@@ -15,6 +15,7 @@ import (
 	"golang.org/x/oauth2"
 
 	"github.com/smallchungus/disttaskqueue/internal/gmail"
+	"github.com/smallchungus/disttaskqueue/internal/oauth"
 	"github.com/smallchungus/disttaskqueue/internal/store"
 	"github.com/smallchungus/disttaskqueue/internal/testutil"
 )
@@ -71,7 +72,7 @@ func setupClient(t *testing.T, m *gmailMock) (*gmail.Client, *store.Store) {
 		RefreshToken: "fake-refresh",
 		Expiry:       time.Now().Add(1 * time.Hour),
 	}
-	if err := gmail.SaveToken(context.Background(), s, u.ID, key, tok); err != nil {
+	if err := oauth.SaveToken(context.Background(), s, u.ID, key, "google", tok); err != nil {
 		t.Fatal(err)
 	}
 
