@@ -3,8 +3,13 @@ set -euo pipefail
 
 cd "$(git rev-parse --show-toplevel)"
 
-if command -v golangci-lint >/dev/null 2>&1; then
-  golangci-lint run ./...
+GOBIN="$(go env GOPATH)/bin"
+LINT="$(command -v golangci-lint || true)"
+if [ -z "$LINT" ] && [ -x "$GOBIN/golangci-lint" ]; then
+  LINT="$GOBIN/golangci-lint"
+fi
+if [ -n "$LINT" ]; then
+  "$LINT" run ./...
 else
   echo "pre-push: golangci-lint not installed, skipping lint" >&2
 fi
