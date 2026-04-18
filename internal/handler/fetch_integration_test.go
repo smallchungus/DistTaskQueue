@@ -143,3 +143,64 @@ func TestFetchHandler_WritesMimeAndReturnsRender(t *testing.T) {
 		t.Fatalf("mime: %q, want %q", written, rawMime)
 	}
 }
+
+func TestUploadHandler_UploadsToDateTreeAndReturnsTerminal(t *testing.T) {
+	uploadJSON, _ := json.Marshal(map[string]any{"id": "uploaded-pdf-id"})
+	listJSON, _ := json.Marshal(map[string]any{"files": []map[string]any{}})
+	createJSON, _ := json.Marshal(map[string]any{"id": "folder-id"})
+
+	srv := httptest.NewServer(http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
+		w.Header().Set("Content-Type", "application/json")
+		switch {
+		case r.URL.Path == "/files" && r.Method == http.MethodGet:
+			_, _ = w.Write(listJSON)
+		case r.URL.Path == "/files" && r.Method == http.MethodPost:
+			_, _ = w.Write(createJSON)
+		case r.URL.Path == "/upload/drive/v3/files":
+			_, _ = w.Write(uploadJSON)
+		default:
+			http.NotFound(w, r)
+		}
+	}))
+	defer srv.Close()
+
+	pool := testutil.StartPostgres(t)
+	if err := store.Migrate(context.Background(), pool.Config().ConnString()); err != nil {
+		t.Fatal(err)
+	}
+	s := store.New(pool)
+	u, _ := s.CreateUser(context.Background(), fmt.Sprintf("up+%d@example.com", time.Now().UnixNano()))
+	key := newKey32()
+	saveFakeToken(t, s, u.ID, key)
+
+	redis := testutil.StartRedis(t)
+
+	dataDir := t.TempDir()
+	jobID := uuid.New()
+	pdfDir := filepath.Join(dataDir, "pdf")
+	if err := os.MkdirAll(pdfDir, 0o755); err != nil {
+		t.Fatal(err)
+	}
+	if err := os.WriteFile(filepath.Join(pdfDir, jobID.String()+".pdf"), []byte("PDF-DATA"), 0o600); err != nil {
+		t.Fatal(err)
+	}
+
+	h := handler.NewUploadHandler(handler.UploadConfig{
+		Store:         s,
+		EncryptionKey: key,
+		OAuth2:        &oauth2.Config{ClientID: "x", ClientSecret: "y"},
+		DriveEndpoint: srv.URL,
+		Redis:         redis,
+		DataDir:       dataDir,
+		RootFolderID:  "root-folder-id",
+	})
+
+	job := store.Job{ID: jobID, UserID: &u.ID, Stage: "upload", CreatedAt: time.Date(2026, 4, 17, 0, 0, 0, 0, time.UTC)}
+	next, err := h.Process(context.Background(), job)
+	if err != nil {
+		t.Fatalf("process: %v", err)
+	}
+	if next != "" {
+		t.Fatalf("next: %q, want '' (terminal)", next)
+	}
+}
