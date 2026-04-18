@@ -30,7 +30,7 @@ func NewRenderHandler(cfg RenderConfig) *RenderHandler {
 
 func (h *RenderHandler) Process(ctx context.Context, job store.Job) (string, error) {
 	mimePath := filepath.Join(h.cfg.DataDir, "mime", job.ID.String()+".eml")
-	rawMime, err := os.ReadFile(mimePath)
+	rawMime, err := os.ReadFile(mimePath) //nolint:gosec // path derived from trusted job ID, not user input
 	if err != nil {
 		return "", fmt.Errorf("read mime: %w", err)
 	}
@@ -46,7 +46,7 @@ func (h *RenderHandler) Process(ctx context.Context, job store.Job) (string, err
 	}
 
 	pdfDir := filepath.Join(h.cfg.DataDir, "pdf")
-	if err := os.MkdirAll(pdfDir, 0o755); err != nil {
+	if err := os.MkdirAll(pdfDir, 0o750); err != nil {
 		return "", fmt.Errorf("mkdir: %w", err)
 	}
 	pdfPath := filepath.Join(pdfDir, job.ID.String()+".pdf")
