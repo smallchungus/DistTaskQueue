@@ -32,5 +32,5 @@ docker-up: ## Start local dev stack (api, postgres, redis)
 docker-down: ## Stop local dev stack
 	docker compose down -v
 
-k8s-validate: ## Validate k8s manifests without applying
-	kubectl apply --dry-run=client -f deploy/k8s/
+k8s-validate: ## Validate k8s manifests offline (requires kubeconform)
+	kubeconform -summary -strict deploy/k8s/
