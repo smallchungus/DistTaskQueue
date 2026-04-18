@@ -338,3 +338,49 @@ func TestMarkFailed_MarksDeadAtMaxAttempts(t *testing.T) {
 		t.Fatalf("status: %s, want dead", got.Status)
 	}
 }
+
+func TestListUsers_ReturnsAllUsers(t *testing.T) {
+	s := newStore(t)
+	ctx := context.Background()
+
+	_, _ = s.CreateUser(ctx, "a@example.com")
+	_, _ = s.CreateUser(ctx, "b@example.com")
+
+	users, err := s.ListUsers(ctx)
+	if err != nil {
+		t.Fatal(err)
+	}
+	if len(users) < 2 {
+		t.Fatalf("got %d users, want >=2", len(users))
+	}
+}
+
+func TestGmailSyncState_RoundTrip(t *testing.T) {
+	s := newStore(t)
+	ctx := context.Background()
+	u, _ := s.CreateUser(ctx, "sync@example.com")
+
+	got, err := s.GetGmailSyncState(ctx, u.ID)
+	if err != nil {
+		t.Fatalf("get empty: %v", err)
+	}
+	if got != "" {
+		t.Fatalf("empty state: got %q, want \"\"", got)
+	}
+
+	if err := s.SetGmailSyncState(ctx, u.ID, "12345"); err != nil {
+		t.Fatalf("set: %v", err)
+	}
+	got, _ = s.GetGmailSyncState(ctx, u.ID)
+	if got != "12345" {
+		t.Fatalf("got %q, want 12345", got)
+	}
+
+	if err := s.SetGmailSyncState(ctx, u.ID, "67890"); err != nil {
+		t.Fatalf("upsert: %v", err)
+	}
+	got, _ = s.GetGmailSyncState(ctx, u.ID)
+	if got != "67890" {
+		t.Fatalf("got %q, want 67890", got)
+	}
+}
