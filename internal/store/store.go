@@ -63,6 +63,22 @@ func (s *Store) ClaimJob(ctx context.Context, id uuid.UUID, workerID string) err
 	return nil
 }
 
+func (s *Store) MarkDone(ctx context.Context, id uuid.UUID) error {
+	const q = `
+		UPDATE pipeline_jobs
+		SET status = $1, completed_at = now(), updated_at = now()
+		WHERE id = $2`
+
+	tag, err := s.pool.Exec(ctx, q, StatusDone, id)
+	if err != nil {
+		return fmt.Errorf("mark done: %w", err)
+	}
+	if tag.RowsAffected() == 0 {
+		return ErrJobNotFound
+	}
+	return nil
+}
+
 func (s *Store) GetJob(ctx context.Context, id uuid.UUID) (Job, error) {
 	const q = `
 		SELECT id, stage, status, payload, worker_id, attempts, max_attempts,

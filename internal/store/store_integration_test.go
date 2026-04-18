@@ -98,3 +98,22 @@ func TestClaimJob_FailsWhenNotQueued(t *testing.T) {
 		t.Fatalf("got %v, want ErrJobNotClaimable", err)
 	}
 }
+
+func TestMarkDone_SetsTerminalState(t *testing.T) {
+	s := newStore(t)
+	ctx := context.Background()
+	j, _ := s.EnqueueJob(ctx, store.NewJob{Stage: "test"})
+	_ = s.ClaimJob(ctx, j.ID, "worker-1")
+
+	if err := s.MarkDone(ctx, j.ID); err != nil {
+		t.Fatalf("done: %v", err)
+	}
+
+	got, _ := s.GetJob(ctx, j.ID)
+	if got.Status != store.StatusDone {
+		t.Fatalf("status: %s", got.Status)
+	}
+	if got.CompletedAt == nil {
+		t.Fatalf("completed_at: nil")
+	}
+}
