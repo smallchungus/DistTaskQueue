@@ -227,6 +227,72 @@ func TestGetUserByEmail_ReturnsErrUserNotFound(t *testing.T) {
 	}
 }
 
+func TestSaveOAuthToken_RoundTrip(t *testing.T) {
+	s := newStore(t)
+	ctx := context.Background()
+	u, _ := s.CreateUser(ctx, "oauth@example.com")
+
+	expires := time.Now().Add(1 * time.Hour).UTC().Truncate(time.Second)
+	in := store.OAuthToken{
+		UserID:    u.ID,
+		Provider:  "google",
+		AccessCT:  []byte("encrypted-access"),
+		RefreshCT: []byte("encrypted-refresh"),
+		ExpiresAt: expires,
+	}
+	if err := s.SaveOAuthToken(ctx, in); err != nil {
+		t.Fatalf("save: %v", err)
+	}
+
+	got, err := s.GetOAuthToken(ctx, u.ID, "google")
+	if err != nil {
+		t.Fatalf("get: %v", err)
+	}
+	if got.UserID != in.UserID || got.Provider != in.Provider {
+		t.Fatalf("identity mismatch: %+v", got)
+	}
+	if string(got.AccessCT) != string(in.AccessCT) || string(got.RefreshCT) != string(in.RefreshCT) {
+		t.Fatalf("ciphertext mismatch")
+	}
+	if !got.ExpiresAt.Equal(expires) {
+		t.Fatalf("expires: got %v want %v", got.ExpiresAt, expires)
+	}
+}
+
+func TestSaveOAuthToken_UpsertsExistingRow(t *testing.T) {
+	s := newStore(t)
+	ctx := context.Background()
+	u, _ := s.CreateUser(ctx, "upsert@example.com")
+
+	first := store.OAuthToken{UserID: u.ID, Provider: "google",
+		AccessCT: []byte("v1-access"), RefreshCT: []byte("v1-refresh"),
+		ExpiresAt: time.Now().Add(time.Hour)}
+	_ = s.SaveOAuthToken(ctx, first)
+
+	second := store.OAuthToken{UserID: u.ID, Provider: "google",
+		AccessCT: []byte("v2-access"), RefreshCT: []byte("v2-refresh"),
+		ExpiresAt: time.Now().Add(2 * time.Hour)}
+	if err := s.SaveOAuthToken(ctx, second); err != nil {
+		t.Fatalf("upsert: %v", err)
+	}
+
+	got, _ := s.GetOAuthToken(ctx, u.ID, "google")
+	if string(got.AccessCT) != "v2-access" {
+		t.Fatalf("not upserted: %s", got.AccessCT)
+	}
+}
+
+func TestGetOAuthToken_ReturnsErrOAuthTokenNotFound(t *testing.T) {
+	s := newStore(t)
+	ctx := context.Background()
+	u, _ := s.CreateUser(ctx, "missing@example.com")
+
+	_, err := s.GetOAuthToken(ctx, u.ID, "google")
+	if !errors.Is(err, store.ErrOAuthTokenNotFound) {
+		t.Fatalf("got %v, want ErrOAuthTokenNotFound", err)
+	}
+}
+
 func jobIDs(js []store.Job) []string {
 	out := make([]string, len(js))
 	for i, j := range js {

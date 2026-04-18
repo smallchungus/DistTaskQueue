@@ -42,3 +42,12 @@ type User struct {
 	Email     string
 	CreatedAt time.Time
 }
+
+type OAuthToken struct {
+	UserID    uuid.UUID
+	Provider  string
+	AccessCT  []byte
+	RefreshCT []byte
+	ExpiresAt time.Time
+	UpdatedAt time.Time
+}
