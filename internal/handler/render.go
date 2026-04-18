@@ -3,12 +3,11 @@ package handler
 import (
 	"bytes"
 	"context"
-	"errors"
+	"encoding/json"
 	"fmt"
-	"net/mail"
 	"os"
 	"path/filepath"
-	"strings"
+	"time"
 
 	"github.com/smallchungus/disttaskqueue/internal/pdf"
 	"github.com/smallchungus/disttaskqueue/internal/store"
@@ -28,18 +27,44 @@ func NewRenderHandler(cfg RenderConfig) *RenderHandler {
 	return &RenderHandler{cfg: cfg, client: pdf.New(cfg.PDFEndpoint)}
 }
 
+// RenderMeta is the cross-stage data written by render and read by upload.
+type RenderMeta struct {
+	Subject         string    `json:"subject"`
+	FromEmail       string    `json:"from_email"`
+	ReceivedAt      time.Time `json:"received_at"`
+	AttachmentNames []string  `json:"attachment_names"`
+}
+
 func (h *RenderHandler) Process(ctx context.Context, job store.Job) (string, error) {
-	mimePath := filepath.Join(h.cfg.DataDir, "mime", job.ID.String()+".eml")
-	rawMime, err := os.ReadFile(mimePath) //nolint:gosec // path derived from trusted job ID, not user input
+	mimePath := filepath.Join(h.cfg.DataDir, "mime", job.ID.String()+".eml") //nolint:gosec // trusted job ID
+	rawMime, err := os.ReadFile(mimePath)                                    //nolint:gosec // trusted job ID
 	if err != nil {
 		return "", fmt.Errorf("read mime: %w", err)
 	}
 
-	html, err := htmlFromMime(rawMime)
+	parsed, err := parseMessage(rawMime)
 	if err != nil {
 		return "", fmt.Errorf("parse mime: %w", err)
 	}
 
+	// Write attachments first (even if render fails, we don't waste them).
+	attachDir := filepath.Join(h.cfg.DataDir, "attachments", job.ID.String())
+	attachmentNames := make([]string, 0, len(parsed.Attachments))
+	if len(parsed.Attachments) > 0 {
+		if err := os.MkdirAll(attachDir, 0o750); err != nil {
+			return "", fmt.Errorf("mkdir attachments: %w", err)
+		}
+	}
+	for _, a := range parsed.Attachments {
+		name := SanitizeFilename(a.Filename)
+		if err := os.WriteFile(filepath.Join(attachDir, name), a.Content, 0o600); err != nil { //nolint:gosec // trusted job ID
+			return "", fmt.Errorf("write attachment %s: %w", name, err)
+		}
+		attachmentNames = append(attachmentNames, name)
+	}
+
+	// Render the body to PDF.
+	html := buildHTMLWrapper(parsed)
 	pdfBytes, err := h.client.RenderHTML(ctx, html)
 	if err != nil {
 		return "", fmt.Errorf("render: %w", err)
@@ -47,53 +72,59 @@ func (h *RenderHandler) Process(ctx context.Context, job store.Job) (string, err
 
 	pdfDir := filepath.Join(h.cfg.DataDir, "pdf")
 	if err := os.MkdirAll(pdfDir, 0o750); err != nil {
-		return "", fmt.Errorf("mkdir: %w", err)
+		return "", fmt.Errorf("mkdir pdf: %w", err)
 	}
-	pdfPath := filepath.Join(pdfDir, job.ID.String()+".pdf")
-	if err := os.WriteFile(pdfPath, pdfBytes, 0o600); err != nil {
+	if err := os.WriteFile(filepath.Join(pdfDir, job.ID.String()+".pdf"), pdfBytes, 0o600); err != nil { //nolint:gosec // trusted job ID
 		return "", fmt.Errorf("write pdf: %w", err)
+	}
+
+	// Write cross-stage metadata.
+	meta := RenderMeta{
+		Subject:         parsed.Subject,
+		FromEmail:       parsed.FromEmail,
+		ReceivedAt:      parsed.ReceivedAt,
+		AttachmentNames: attachmentNames,
+	}
+	if meta.ReceivedAt.IsZero() {
+		meta.ReceivedAt = job.CreatedAt
+	}
+	metaB, err := json.Marshal(meta)
+	if err != nil {
+		return "", fmt.Errorf("marshal meta: %w", err)
+	}
+	metaDir := filepath.Join(h.cfg.DataDir, "meta")
+	if err := os.MkdirAll(metaDir, 0o750); err != nil {
+		return "", fmt.Errorf("mkdir meta: %w", err)
+	}
+	if err := os.WriteFile(filepath.Join(metaDir, job.ID.String()+".json"), metaB, 0o600); err != nil { //nolint:gosec // trusted job ID
+		return "", fmt.Errorf("write meta: %w", err)
 	}
 
 	return "upload", nil
 }
 
-func htmlFromMime(raw []byte) ([]byte, error) {
-	msg, err := mail.ReadMessage(bytes.NewReader(raw))
-	if err != nil {
-		return nil, fmt.Errorf("read message: %w", err)
-	}
-	subject := msg.Header.Get("Subject")
-	from := msg.Header.Get("From")
-	date := msg.Header.Get("Date")
-
-	body := &bytes.Buffer{}
-	if _, err := body.ReadFrom(msg.Body); err != nil {
-		return nil, fmt.Errorf("read body: %w", err)
-	}
-
-	if subject == "" && from == "" && body.Len() == 0 {
-		return nil, errors.New("empty message")
+func buildHTMLWrapper(p ParsedMessage) []byte {
+	body := p.HTML
+	if len(body) == 0 {
+		body = []byte("<pre>" + htmlEscape(string(p.Text)) + "</pre>")
 	}
 
 	out := &bytes.Buffer{}
-	fmt.Fprintf(out, "<!doctype html><html><head><meta charset=\"utf-8\"><title>%s</title></head><body>", htmlEscape(subject))
-	fmt.Fprintf(out, "<div style=\"font-family:sans-serif;border-bottom:1px solid #ccc;padding-bottom:8px;margin-bottom:12px\">")
-	fmt.Fprintf(out, "<div><strong>From:</strong> %s</div>", htmlEscape(from))
-	fmt.Fprintf(out, "<div><strong>Date:</strong> %s</div>", htmlEscape(date))
-	fmt.Fprintf(out, "<div><strong>Subject:</strong> %s</div>", htmlEscape(subject))
-	fmt.Fprintf(out, "</div>")
-	contentType := msg.Header.Get("Content-Type")
-	if contentType == "" || strings.HasPrefix(contentType, "text/html") {
-		out.Write(body.Bytes())
-	} else {
-		fmt.Fprintf(out, "<pre>%s</pre>", htmlEscape(body.String()))
+	fmt.Fprintf(out, `<!doctype html><html><head><meta charset="utf-8"><title>%s</title></head><body>`, htmlEscape(p.Subject))
+	fmt.Fprintf(out, `<div style="font-family:sans-serif;border-bottom:1px solid #ccc;padding-bottom:8px;margin-bottom:12px">`)
+	fmt.Fprintf(out, `<div><strong>From:</strong> %s</div>`, htmlEscape(p.From))
+	if !p.ReceivedAt.IsZero() {
+		fmt.Fprintf(out, `<div><strong>Date:</strong> %s</div>`, htmlEscape(p.ReceivedAt.Format(time.RFC1123)))
 	}
-	out.WriteString("</body></html>")
-	return out.Bytes(), nil
+	fmt.Fprintf(out, `<div><strong>Subject:</strong> %s</div>`, htmlEscape(p.Subject))
+	fmt.Fprintf(out, `</div>`)
+	out.Write(body)
+	out.WriteString(`</body></html>`)
+	return out.Bytes()
 }
 
 func htmlEscape(s string) string {
-	r := bytes.NewBuffer(nil)
+	var r bytes.Buffer
 	for _, c := range []byte(s) {
 		switch c {
 		case '<':

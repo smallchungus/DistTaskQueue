@@ -23,8 +23,21 @@ import (
 	"github.com/smallchungus/disttaskqueue/internal/testutil"
 )
 
-func TestRenderHandler_WritesPDFAndReturnsUpload(t *testing.T) {
-	const fakeMime = "From: a@b.com\r\nSubject: hi\r\nContent-Type: text/html\r\n\r\n<h1>Hello</h1>"
+func TestRenderHandler_ParsesMultipartAndSavesAttachments(t *testing.T) {
+	const msgRaw = "From: alice@example.com\r\n" +
+		"Subject: hi\r\n" +
+		"Date: Fri, 18 Apr 2026 10:30:45 +0000\r\n" +
+		"Content-Type: multipart/mixed; boundary=MIX\r\n\r\n" +
+		"--MIX\r\n" +
+		"Content-Type: text/html; charset=utf-8\r\n\r\n" +
+		"<p>Hello</p>\r\n" +
+		"--MIX\r\n" +
+		"Content-Type: application/pdf; name=report.pdf\r\n" +
+		"Content-Disposition: attachment; filename=report.pdf\r\n" +
+		"Content-Transfer-Encoding: base64\r\n\r\n" +
+		"SGVsbG9QREY=\r\n" +
+		"--MIX--\r\n"
+
 	const fakePDF = "%PDF-1.7\nfake\n%%EOF"
 
 	srv := httptest.NewServer(http.HandlerFunc(func(w http.ResponseWriter, _ *http.Request) {
@@ -37,17 +50,14 @@ func TestRenderHandler_WritesPDFAndReturnsUpload(t *testing.T) {
 	jobID := uuid.New()
 
 	mimeDir := filepath.Join(dataDir, "mime")
-	if err := os.MkdirAll(mimeDir, 0o755); err != nil {
+	if err := os.MkdirAll(mimeDir, 0o750); err != nil {
 		t.Fatal(err)
 	}
-	if err := os.WriteFile(filepath.Join(mimeDir, jobID.String()+".eml"), []byte(fakeMime), 0o600); err != nil {
+	if err := os.WriteFile(filepath.Join(mimeDir, jobID.String()+".eml"), []byte(msgRaw), 0o600); err != nil {
 		t.Fatal(err)
 	}
 
-	h := handler.NewRenderHandler(handler.RenderConfig{
-		DataDir:     dataDir,
-		PDFEndpoint: srv.URL,
-	})
+	h := handler.NewRenderHandler(handler.RenderConfig{DataDir: dataDir, PDFEndpoint: srv.URL})
 
 	job := store.Job{ID: jobID, Stage: "render"}
 	next, err := h.Process(context.Background(), job)
@@ -55,15 +65,35 @@ func TestRenderHandler_WritesPDFAndReturnsUpload(t *testing.T) {
 		t.Fatalf("process: %v", err)
 	}
 	if next != "upload" {
-		t.Fatalf("next: %q, want upload", next)
+		t.Fatalf("next: %q", next)
 	}
 
-	written, err := os.ReadFile(filepath.Join(dataDir, "pdf", jobID.String()+".pdf"))
-	if err != nil {
-		t.Fatalf("read pdf: %v", err)
+	pdf, err := os.ReadFile(filepath.Join(dataDir, "pdf", jobID.String()+".pdf"))
+	if err != nil || string(pdf) != fakePDF {
+		t.Fatalf("pdf: %v / %q", err, pdf)
 	}
-	if string(written) != fakePDF {
-		t.Fatalf("pdf: got %q, want %q", written, fakePDF)
+
+	metaB, err := os.ReadFile(filepath.Join(dataDir, "meta", jobID.String()+".json"))
+	if err != nil {
+		t.Fatalf("meta: %v", err)
+	}
+	var meta handler.RenderMeta
+	if err := json.Unmarshal(metaB, &meta); err != nil {
+		t.Fatalf("parse meta: %v", err)
+	}
+	if meta.Subject != "hi" || meta.FromEmail != "alice@example.com" {
+		t.Fatalf("meta: %+v", meta)
+	}
+	if len(meta.AttachmentNames) != 1 || meta.AttachmentNames[0] != "report.pdf" {
+		t.Fatalf("attachment names: %v", meta.AttachmentNames)
+	}
+
+	attach, err := os.ReadFile(filepath.Join(dataDir, "attachments", jobID.String(), "report.pdf"))
+	if err != nil {
+		t.Fatalf("attachment: %v", err)
+	}
+	if string(attach) != "HelloPDF" {
+		t.Fatalf("attachment content: %q", attach)
 	}
 }
 
