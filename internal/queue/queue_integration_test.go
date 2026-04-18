@@ -81,3 +81,27 @@ func TestBlockingPop_ReturnsErrEmptyOnTimeout(t *testing.T) {
 		t.Fatalf("got %v, want ErrEmpty", err)
 	}
 }
+
+func TestHeartbeat_SetsKeyWithTTL(t *testing.T) {
+	q := newQueue(t)
+	cli := q.Client()
+
+	if err := q.Heartbeat(context.Background(), "worker-xyz", 5*time.Second); err != nil {
+		t.Fatalf("heartbeat: %v", err)
+	}
+
+	val, err := cli.Get(context.Background(), "heartbeat:worker-xyz").Result()
+	if err != nil {
+		t.Fatalf("get: %v", err)
+	}
+	if val == "" {
+		t.Fatalf("empty value")
+	}
+	ttl, err := cli.TTL(context.Background(), "heartbeat:worker-xyz").Result()
+	if err != nil {
+		t.Fatalf("ttl: %v", err)
+	}
+	if ttl <= 0 || ttl > 5*time.Second {
+		t.Fatalf("ttl out of range: %v", ttl)
+	}
+}
