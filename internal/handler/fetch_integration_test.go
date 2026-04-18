@@ -23,6 +23,50 @@ import (
 	"github.com/smallchungus/disttaskqueue/internal/testutil"
 )
 
+func TestRenderHandler_WritesPDFAndReturnsUpload(t *testing.T) {
+	const fakeMime = "From: a@b.com\r\nSubject: hi\r\nContent-Type: text/html\r\n\r\n<h1>Hello</h1>"
+	const fakePDF = "%PDF-1.7\nfake\n%%EOF"
+
+	srv := httptest.NewServer(http.HandlerFunc(func(w http.ResponseWriter, _ *http.Request) {
+		w.Header().Set("Content-Type", "application/pdf")
+		_, _ = w.Write([]byte(fakePDF))
+	}))
+	defer srv.Close()
+
+	dataDir := t.TempDir()
+	jobID := uuid.New()
+
+	mimeDir := filepath.Join(dataDir, "mime")
+	if err := os.MkdirAll(mimeDir, 0o755); err != nil {
+		t.Fatal(err)
+	}
+	if err := os.WriteFile(filepath.Join(mimeDir, jobID.String()+".eml"), []byte(fakeMime), 0o600); err != nil {
+		t.Fatal(err)
+	}
+
+	h := handler.NewRenderHandler(handler.RenderConfig{
+		DataDir:     dataDir,
+		PDFEndpoint: srv.URL,
+	})
+
+	job := store.Job{ID: jobID, Stage: "render"}
+	next, err := h.Process(context.Background(), job)
+	if err != nil {
+		t.Fatalf("process: %v", err)
+	}
+	if next != "upload" {
+		t.Fatalf("next: %q, want upload", next)
+	}
+
+	written, err := os.ReadFile(filepath.Join(dataDir, "pdf", jobID.String()+".pdf"))
+	if err != nil {
+		t.Fatalf("read pdf: %v", err)
+	}
+	if string(written) != fakePDF {
+		t.Fatalf("pdf: got %q, want %q", written, fakePDF)
+	}
+}
+
 func newKey32() []byte {
 	k := make([]byte, 32)
 	for i := range k {
