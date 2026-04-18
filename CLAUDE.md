@@ -78,7 +78,7 @@ Global rules cover most of this. Project additions:
 
 - When reporting test results, paste the actual output — don't paraphrase. "All tests pass" is not evidence; `ok internal/queue 0.412s` is.
 - Don't claim k3s deploys work without `kubectl get pods` output showing it.
-- Commit subjects use prefixes: `queue:`, `worker:`, `api:`, `sweeper:`, `gmail:`, `drive:`, `k8s:`, `ci:`, `docs:`, `test:`. Keeps `git log` scannable.
+- **Commit subjects use Conventional Commits** with optional component scope: `<type>(<scope>): <subject>`. Examples: `feat(api): add SSE stream endpoint`, `fix(queue): handle BLPOP timeout race`, `chore(k8s): bump postgres image to 16.3`. Bare `chore:` / `docs:` / `test:` (no scope) are also fine. Allowed types: `feat`, `fix`, `chore`, `docs`, `test`, `refactor`, `perf`, `build`, `ci`, `style`, `revert`. Scopes are project components: `api`, `queue`, `worker`, `sweeper`, `scheduler`, `gmail`, `drive`, `k8s`, `oauth`, `dashboard`. Subject in imperative mood, under 72 chars, no trailing period.
 
 ## What I do NOT want, ever
 
