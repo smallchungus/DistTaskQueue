@@ -1,4 +1,4 @@
-module github.com/wchen1396/disttaskqueue
+module github.com/smallchungus/disttaskqueue
 
 go 1.25.0
 

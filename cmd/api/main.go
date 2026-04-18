@@ -10,7 +10,7 @@ import (
 	"syscall"
 	"time"
 
-	"github.com/wchen1396/disttaskqueue/internal/api"
+	"github.com/smallchungus/disttaskqueue/internal/api"
 )
 
 var (

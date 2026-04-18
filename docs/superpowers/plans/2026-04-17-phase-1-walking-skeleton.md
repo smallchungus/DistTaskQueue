@@ -8,7 +8,7 @@
 
 **Tech Stack:** Go 1.24, `chi` router, `pgx/v5`, `go-redis/v9`, `slog`, `golangci-lint`, `testcontainers-go`, Docker, GitHub Actions, k3s manifests (vanilla Kubernetes YAML).
 
-**Module name assumption:** `github.com/wchen1396/disttaskqueue`. If your GitHub username differs, do a project-wide find/replace on the module path before starting Section A.
+**Module name assumption:** `github.com/smallchungus/disttaskqueue`. If your GitHub username differs, do a project-wide find/replace on the module path before starting Section A.
 
 **Spec reference:** `docs/superpowers/specs/2026-04-17-distributed-task-queue-design.md`
 
@@ -25,7 +25,7 @@
 
 ```bash
 cd /Users/willchen/Development/DistTaskQueue
-go mod init github.com/wchen1396/disttaskqueue
+go mod init github.com/smallchungus/disttaskqueue
 ```
 
 - [ ] **Step 2: Pin Go version**
@@ -45,7 +45,7 @@ cat go.mod
 Expected output (exact):
 
 ```
-module github.com/wchen1396/disttaskqueue
+module github.com/smallchungus/disttaskqueue
 
 go 1.24
 ```
@@ -270,7 +270,7 @@ func healthz(w http.ResponseWriter, _ *http.Request) {
 go test ./internal/api/...
 ```
 
-Expected: `ok  github.com/wchen1396/disttaskqueue/internal/api  <duration>`.
+Expected: `ok  github.com/smallchungus/disttaskqueue/internal/api  <duration>`.
 
 - [ ] **Step 3: Commit**
 
@@ -503,7 +503,7 @@ import (
 	"syscall"
 	"time"
 
-	"github.com/wchen1396/disttaskqueue/internal/api"
+	"github.com/smallchungus/disttaskqueue/internal/api"
 )
 
 var (
@@ -584,6 +584,135 @@ Expected: `200`, then `{"version":"dev","commit":"none"}`. Stop the server with 
 git add cmd/api/
 git commit -m "api: add main with graceful shutdown and slog json output"
 ```
+
+---
+
+## Section B-bis — Git hooks (local dev safety net)
+
+Local pre-commit and pre-push hooks. Pre-commit is fast (gofmt + vet + short unit tests) and runs on every commit. Pre-push runs lint + full unit tests. Integration tests stay in CI only (they need Docker and are slow). Hooks are opt-in — devs run `make install-hooks` once after clone.
+
+### Task BB1: Hook scripts and installer
+
+**Files:**
+- Create: `scripts/hooks/pre-commit`
+- Create: `scripts/hooks/pre-push`
+- Create: `scripts/install-hooks.sh`
+- Modify: `Makefile` (add `install-hooks` target)
+- Modify: `README.md` later in Section H references this — no change here
+
+- [ ] **Step 1: Write pre-commit hook**
+
+Create `scripts/hooks/pre-commit`:
+
+```bash
+#!/usr/bin/env bash
+set -euo pipefail
+
+cd "$(git rev-parse --show-toplevel)"
+
+unformatted=$(gofmt -l . 2>/dev/null | grep -v '^vendor/' || true)
+if [ -n "$unformatted" ]; then
+  echo "pre-commit: gofmt issues in:" >&2
+  echo "$unformatted" >&2
+  echo "run: gofmt -w ." >&2
+  exit 1
+fi
+
+go vet ./...
+go test -short -count=1 ./...
+```
+
+- [ ] **Step 2: Write pre-push hook**
+
+Create `scripts/hooks/pre-push`:
+
+```bash
+#!/usr/bin/env bash
+set -euo pipefail
+
+cd "$(git rev-parse --show-toplevel)"
+
+if command -v golangci-lint >/dev/null 2>&1; then
+  golangci-lint run ./...
+else
+  echo "pre-push: golangci-lint not installed, skipping lint" >&2
+fi
+
+go test -race -count=1 ./...
+```
+
+- [ ] **Step 3: Write installer**
+
+Create `scripts/install-hooks.sh`:
+
+```bash
+#!/usr/bin/env bash
+set -euo pipefail
+
+cd "$(git rev-parse --show-toplevel)"
+
+hooks_dir="$(git rev-parse --git-path hooks)"
+mkdir -p "$hooks_dir"
+
+for hook in pre-commit pre-push; do
+  src="scripts/hooks/$hook"
+  dst="$hooks_dir/$hook"
+  ln -sf "$(pwd)/$src" "$dst"
+  chmod +x "$src"
+  echo "installed: $dst -> $src"
+done
+```
+
+- [ ] **Step 4: Add Makefile target**
+
+Append to `Makefile` (under `.PHONY` line — add `install-hooks` to the list — and add a new target):
+
+`.PHONY` line becomes:
+
+```
+.PHONY: help test test-unit test-integration lint build run docker docker-up docker-down k8s-validate install-hooks
+```
+
+Add target (place near `lint` for grouping):
+
+```makefile
+install-hooks: ## Install git pre-commit and pre-push hooks
+	./scripts/install-hooks.sh
+```
+
+- [ ] **Step 5: Make the scripts executable and install**
+
+```bash
+chmod +x scripts/hooks/pre-commit scripts/hooks/pre-push scripts/install-hooks.sh
+make install-hooks
+```
+
+Expected: prints two `installed: ...` lines.
+
+- [ ] **Step 6: Verify pre-commit fires by attempting a no-op commit**
+
+```bash
+git commit --allow-empty -m "test: verify pre-commit hook fires" --dry-run
+```
+
+Actually, `--dry-run` skips hooks. Real verification: stage one trivial change and try a commit, expecting the hook to run. Skip to next step instead.
+
+- [ ] **Step 7: Stage hook files and commit (the hook will run on this very commit, validating itself)**
+
+```bash
+git add scripts/ Makefile
+git commit -m "ci: add pre-commit and pre-push git hooks with installer"
+```
+
+Expected: commit succeeds. The pre-commit hook ran gofmt + vet + short tests against the current state, all clean.
+
+- [ ] **Step 8: Verify hook is installed**
+
+```bash
+ls -la "$(git rev-parse --git-path hooks)"/pre-commit "$(git rev-parse --git-path hooks)"/pre-push
+```
+
+Expected: both shown as symlinks pointing into `scripts/hooks/`.
 
 ---
 
@@ -810,9 +939,9 @@ Create `Dockerfile`:
 ```dockerfile
 # syntax=docker/dockerfile:1.7
 
-FROM golang:1.24-alpine AS build
+FROM golang:1.25-alpine AS build
 WORKDIR /src
-RUN apk add --no-cache ca-certificates git
+RUN apk add --no-cache ca-certificates
 COPY go.mod go.sum ./
 RUN --mount=type=cache,target=/go/pkg/mod go mod download
 COPY . .
@@ -1011,7 +1140,7 @@ jobs:
     steps:
       - uses: actions/checkout@v4
       - uses: actions/setup-go@v5
-        with: { go-version: "1.24" }
+        with: { go-version: "1.25" }
       - uses: golangci/golangci-lint-action@v6
         with: { version: latest }
 
@@ -1020,7 +1149,7 @@ jobs:
     steps:
       - uses: actions/checkout@v4
       - uses: actions/setup-go@v5
-        with: { go-version: "1.24" }
+        with: { go-version: "1.25" }
       - run: go test -race -count=1 ./...
 
   integration:
@@ -1028,7 +1157,7 @@ jobs:
     steps:
       - uses: actions/checkout@v4
       - uses: actions/setup-go@v5
-        with: { go-version: "1.24" }
+        with: { go-version: "1.25" }
       - run: go test -race -count=1 -tags=integration ./...
 
   image:
@@ -1280,7 +1409,7 @@ spec:
     spec:
       containers:
         - name: api
-          image: ghcr.io/wchen1396/disttaskqueue-api:latest
+          image: ghcr.io/smallchungus/disttaskqueue-api:latest
           imagePullPolicy: Always
           ports: [{ containerPort: 8080 }]
           envFrom:
@@ -1464,13 +1593,20 @@ These land in later plans and should NOT be added to Phase 1:
 - HPA manifests, Prometheus, metrics adapter.
 - GitHub Actions deploy job (requires the Hetzner box to exist).
 
-## Phase 1.5 (separate, smaller plan after Phase 1 ships)
+## Phase 1.5 (separate, larger plan after Phase 1 ships)
 
-- Provision Hetzner CX22.
-- Install k3s; copy kubeconfig to a GitHub repo secret.
-- Deploy Cloudflare Tunnel pointing at `api` Service.
-- Add a `deploy` job to `ci.yml` that pushes the image to GHCR and runs `kubectl apply -f deploy/k8s/` against the cluster.
-- First public hello-world URL serving `/healthz` and `/version` from k3s.
+The "go from green CI to live URL with promotion gates" plan.
+
+- Provision Hetzner CX22, install k3s, copy kubeconfig to GitHub repo secret.
+- Two k3s namespaces on the same box: `dtq-staging` and `dtq-production`.
+- Two GitHub Environments: `staging` and `production`. Per-environment secrets (kubeconfig, image pull, encryption key).
+- Deploy Cloudflare Tunnel as a k8s Deployment for each namespace; map two subdomains (e.g., `staging.dtq.example` and `dtq.example`).
+- New workflows:
+  - `deploy-staging.yml` — on push to `main`: build + push image tagged `:sha-<short>` to GHCR, `kubectl apply` to `dtq-staging`.
+  - `smoke-staging.yml` — after staging deploy: curl staging URL, assert `/healthz` and `/version`. On green, write a tag `release-<sha>`.
+  - `deploy-production.yml` — on tag push matching `release-*`: gated by GitHub Environment manual approval (single click), `kubectl apply` to `dtq-production`.
+- PR auto-merge: enable GitHub auto-merge on the repo, set required checks to `lint`, `unit`, `integration`, `image`. Once green, GitHub merges PRs automatically.
+- First public hello-world URL serving `/healthz` and `/version` from `dtq-production`, plus a separate staging URL.
 
 ## Phase 2 preview (separate plan)
 
