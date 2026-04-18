@@ -145,6 +145,67 @@ func TestMarkFailed_RequeuesWithIncrementedAttempts(t *testing.T) {
 	}
 }
 
+func TestListRunningJobs_ReturnsOnlyRunning(t *testing.T) {
+	s := newStore(t)
+	ctx := context.Background()
+
+	jQueued, _ := s.EnqueueJob(ctx, store.NewJob{Stage: "test"})
+	jRunning, _ := s.EnqueueJob(ctx, store.NewJob{Stage: "test"})
+	_ = s.ClaimJob(ctx, jRunning.ID, "w1")
+	jDone, _ := s.EnqueueJob(ctx, store.NewJob{Stage: "test"})
+	_ = s.ClaimJob(ctx, jDone.ID, "w2")
+	_ = s.MarkDone(ctx, jDone.ID)
+
+	jobs, err := s.ListRunningJobs(ctx)
+	if err != nil {
+		t.Fatal(err)
+	}
+	if len(jobs) != 1 {
+		t.Fatalf("got %d jobs, want 1", len(jobs))
+	}
+	if jobs[0].ID != jRunning.ID {
+		t.Fatalf("got id %s, want %s", jobs[0].ID, jRunning.ID)
+	}
+	_ = jQueued
+}
+
+func TestListReadyRetryJobs_ReturnsQueuedWithLastErrorAndDueNextRun(t *testing.T) {
+	s := newStore(t)
+	ctx := context.Background()
+
+	j1, _ := s.EnqueueJob(ctx, store.NewJob{Stage: "test"})
+	_ = s.ClaimJob(ctx, j1.ID, "w1")
+	past := time.Now().Add(-1 * time.Minute)
+	_ = s.MarkFailed(ctx, j1.ID, "boom", past)
+
+	j2, _ := s.EnqueueJob(ctx, store.NewJob{Stage: "test"})
+	_ = s.ClaimJob(ctx, j2.ID, "w1")
+	future := time.Now().Add(5 * time.Minute)
+	_ = s.MarkFailed(ctx, j2.ID, "boom", future)
+
+	j3, _ := s.EnqueueJob(ctx, store.NewJob{Stage: "test"})
+
+	jobs, err := s.ListReadyRetryJobs(ctx)
+	if err != nil {
+		t.Fatal(err)
+	}
+	if len(jobs) != 1 {
+		t.Fatalf("got %d, want 1; got IDs: %v", len(jobs), jobIDs(jobs))
+	}
+	if jobs[0].ID != j1.ID {
+		t.Fatalf("got %s, want %s", jobs[0].ID, j1.ID)
+	}
+	_, _ = j2, j3
+}
+
+func jobIDs(js []store.Job) []string {
+	out := make([]string, len(js))
+	for i, j := range js {
+		out[i] = j.ID.String()
+	}
+	return out
+}
+
 func TestMarkFailed_MarksDeadAtMaxAttempts(t *testing.T) {
 	s := newStore(t)
 	ctx := context.Background()
