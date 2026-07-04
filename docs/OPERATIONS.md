@@ -458,3 +458,28 @@ What you should see (timings depend on WORKER_HEARTBEAT_TTL_SEC=15 and the
 
 A captured run lives in `docs/chaos-demo-sample.txt`. If the demo stalls,
 check `kubectl -n disttaskqueue logs deploy/sweeper`.
+
+---
+
+## 13. Runbook — queue-depth autoscaling (KEDA)
+
+Worker Deployments scale 1–5 replicas on Redis queue depth via KEDA
+ScaledObjects (`deploy/k8s/29-keda-scaledobjects.yaml`). KEDA's redis
+scaler runs `LLEN queue:<stage>` every 5 s and drives a standard HPA;
+target is 25 queued jobs per replica.
+
+One-time install:
+
+    helm repo add kedacore https://kedacore.github.io/charts
+    helm repo update
+    helm install keda kedacore/keda --namespace keda --create-namespace
+
+Then `kubectl apply -f deploy/k8s/29-keda-scaledobjects.yaml`.
+
+Inspect scaling state:
+
+    kubectl -n disttaskqueue get scaledobjects
+    kubectl -n disttaskqueue get hpa
+    kubectl -n disttaskqueue describe scaledobject worker-test
+
+To load-test the scaler and produce the chart, see §14.
