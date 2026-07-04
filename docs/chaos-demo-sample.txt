@@ -1,0 +1,9 @@
+16:17:33  enqueue slow synthetic job (5s sleep)
+16:17:33  job e01217fe-c5f8-4378-9f15-93b97f44d4fb queued
+16:17:33  waiting for a worker to claim it
+16:17:36  job running on workertestcb88698dfvlsjx-ed73be581d93d71c — killing worker pod now
+16:17:36  worker pod force-deleted
+16:17:37  running worker=workertestcb88698dfvlsjx-ed73be581d93d71c attempts=0 err=-
+16:17:49  running worker=workertestcb88698df99z9l-2c9b1315c74899bb attempts=1 err=worker died
+16:17:54  done worker=workertestcb88698df99z9l-2c9b1315c74899bb attempts=1 err=worker died
+16:17:54  job survived the crash
