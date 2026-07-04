@@ -505,3 +505,22 @@ docs/loadtest/. Requires the KEDA ScaledObjects from §13.
 Depth is sampled from the api /metrics gauge, which refreshes every 10 s —
 bursts that drain faster than that window won't appear in the chart even
 though KEDA (which polls Redis directly) reacts to them.
+
+---
+
+## 15. Runbook — host firewall (hcloud)
+
+The `dtq` Hetzner firewall allows inbound tcp/22 and tcp/80 from anywhere
+and tcp/6443 (kube API) only from the home IP. Everything else is denied
+by default.
+
+If kubectl suddenly times out on 6443, the home IP changed. Fix:
+
+    hcloud firewall describe dtq          # see current rules
+    hcloud firewall delete-rule dtq --direction in --protocol tcp --port 6443 \
+      --source-ips <old-ip>/32 --source-ips <old-v6-prefix>/64
+    hcloud firewall add-rule dtq --direction in --protocol tcp --port 6443 \
+      --source-ips "$(curl -4 -s ifconfig.me)/32"
+
+Note: for IPv6 sources use the delegated /64 prefix, not the host /128 —
+home IPv6 privacy addresses rotate daily.
