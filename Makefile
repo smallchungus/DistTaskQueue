@@ -29,7 +29,7 @@ run: ## Run the api binary locally
 docker: ## Build the api Docker image
 	docker build -t disttaskqueue/api:dev .
 
-docker-up: ## Start local dev stack (api, postgres, redis)
+docker-up: ## Start full local stack (all services; copy .env.example to .env first for Gmail/Drive)
 	docker compose up --build
 
 docker-down: ## Stop local dev stack
