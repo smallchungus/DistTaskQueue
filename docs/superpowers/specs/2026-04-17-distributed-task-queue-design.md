@@ -217,7 +217,7 @@ Postgres is the source of truth for job claims (the `worker_id` column on `pipel
   attachments/<job_id>/<original_filename>
 ```
 
-GC by retention sweep: delete files older than 7 days whose corresponding job is `done` or `dead`.
+GC by retention sweep: a daily CronJob deletes files older than 7 days by age alone (no job-status lookup — a 7-day-old file for an unfinished job means the job is already dead or stuck past `max_attempts`, so age is a safe predicate and keeps the GC a one-line `find`).
 
 ### 5.4 Drive layout
 

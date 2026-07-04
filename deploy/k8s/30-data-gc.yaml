@@ -1,0 +1,36 @@
+apiVersion: batch/v1
+kind: CronJob
+metadata:
+  name: data-gc
+  namespace: disttaskqueue
+spec:
+  schedule: "20 4 * * *"
+  concurrencyPolicy: Forbid
+  successfulJobsHistoryLimit: 1
+  failedJobsHistoryLimit: 2
+  jobTemplate:
+    spec:
+      template:
+        spec:
+          restartPolicy: Never
+          containers:
+            - name: gc
+              image: busybox:1.36
+              command:
+                - /bin/sh
+                - -c
+                - |
+                  for d in mime pdf attachments meta; do
+                    [ -d "/data/$d" ] && find "/data/$d" -type f -mtime +7 -delete
+                  done
+                  for d in mime pdf attachments meta; do
+                    [ -d "/data/$d" ] && find "/data/$d" -mindepth 1 -type d -empty -delete
+                  done
+                  df -h /data
+              volumeMounts:
+                - name: data
+                  mountPath: /data
+          volumes:
+            - name: data
+              persistentVolumeClaim:
+                claimName: dtq-data
