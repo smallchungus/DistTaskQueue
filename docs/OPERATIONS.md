@@ -428,3 +428,33 @@ Guidelines based on measured behavior.
 | Multi-user, 100+ users | Move Postgres + Redis to managed services (RDS + ElastiCache or equivalent). Scale render-worker to 3–5 replicas. Replace `/data` with object storage. |
 
 Render-worker is always the first bottleneck. Chromium's memory footprint per render (100–300 MB) dominates the box's RAM during bursts.
+
+---
+
+## 12. Runbook — chaos demo (kill a worker mid-job)
+
+Proves the crash-recovery story end to end: a worker dies while processing,
+the sweeper notices the expired heartbeat, the job retries on a fresh pod.
+
+Prerequisites: kubeconfig pointing at the cluster, the stack deployed, and
+the API reachable:
+
+    kubectl -n disttaskqueue port-forward svc/api 8080:80 &
+    export API_URL=http://localhost:8080
+
+Run:
+
+    ./scripts/chaos-demo.sh
+
+What you should see (timings depend on WORKER_HEARTBEAT_TTL_SEC=15 and the
+5 s sweep interval):
+
+1. Job enqueued and claimed within a second or two.
+2. Pod force-deleted while the job sleeps.
+3. ~15–25 s later the sweeper marks it `queued` with `err=worker died`,
+   `attempts=1`.
+4. The replacement pod (Deployment recreates it in seconds) claims and
+   finishes it: `done`.
+
+A captured run lives in `docs/chaos-demo-sample.txt`. If the demo stalls,
+check `kubectl -n disttaskqueue logs deploy/sweeper`.
