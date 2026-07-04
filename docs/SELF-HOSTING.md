@@ -3,7 +3,7 @@
 Run the full Gmail → PDF → Drive pipeline on your own machine with Docker
 Compose. About 10 minutes, most of it clicking through Google Cloud Console.
 
-Prereqs: Docker, Docker Compose v2.
+Prereqs: Docker, Docker Compose v2.24+ (required for optional `env_file` support).
 
 ## 1. Google Cloud setup
 
@@ -45,7 +45,14 @@ Leave `DATABASE_URL` and `REDIS_URL` as-is — Compose points every service at
 the `postgres` and `redis` containers directly; those two entries in `.env`
 only matter if you run a binary outside Compose.
 
-## 3. Bring up the stack
+## 3. Pinning a version (optional)
+
+By default, Compose pulls `disttaskqueue-api:latest`. For production, pin to a
+released version from the [releases page](https://github.com/smallchungus/DistTaskQueue/releases).
+Edit `docker-compose.yaml` and replace all occurrences of `:latest` with the
+version tag, e.g., `:v0.1.0`.
+
+## 4. Bring up the stack
 
 ```bash
 docker compose up -d
@@ -60,7 +67,7 @@ docker compose ps
 curl localhost:8080/healthz
 ```
 
-## 4. Authorize your Google account
+## 5. Authorize your Google account
 
 Run the one-off OAuth bootstrap. It opens a local callback server on
 `:8888` and prints a URL to open in your browser:
@@ -73,7 +80,7 @@ Open the printed URL, sign in, authorize. The terminal prints "Token saved"
 once the callback completes. The scheduler starts syncing that account on
 its next poll (every 60 s).
 
-## 5. Verify it works
+## 6. Verify it works
 
 Send yourself an email. Within about 2 minutes it should show up as a PDF
 in your Drive, under a dated folder tree:
@@ -82,7 +89,7 @@ in your Drive, under a dated folder tree:
 If it doesn't, `docker compose logs -f scheduler worker-fetch worker-render
 worker-upload` is the first place to look.
 
-## 6. Back up your existing inbox
+## 7. Back up your existing inbox
 
 The scheduler only forward-syncs new mail — it never backfills on its own,
 so day one only picks up whatever arrives after you connect the account.
