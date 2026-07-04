@@ -6,22 +6,23 @@ Runbooks for operating DistTaskQueue in production. For *what* each component do
 
 ## 1. System inventory
 
-What runs where, in the default deployment:
+What runs where. Current home: a Hetzner cpx21 (3 vCPU / 4 GB) running k3s.
 
 | Component | Binary / image | Replicas | Health |
 |---|---|---|---|
 | API | `ghcr.io/smallchungus/disttaskqueue-api:latest` (`/api`) | 1 | `GET /healthz` |
-| Worker — fetch | same image, `/worker --stage=fetch` | 1 | (no HTTP, relies on heartbeat) |
-| Worker — render | same image, `/worker --stage=render` | 1 | same |
-| Worker — upload | same image, `/worker --stage=upload` | 1 | same |
-| Worker — test (synthetic demo) | same image, `/worker --stage=test` | 0 or 1 | same |
+| Worker — fetch | same image, `/worker --stage=fetch` | 1–5 (KEDA) | (no HTTP, relies on heartbeat) |
+| Worker — render | same image, `/worker --stage=render` | 1–5 (KEDA) | same |
+| Worker — upload | same image, `/worker --stage=upload` | 1–5 (KEDA) | same |
+| Worker — test (synthetic demo) | same image, `/worker --stage=test` | 1–5 (KEDA) | same |
 | Sweeper | same image, `/sweeper` | 1 | same |
 | Scheduler | same image, `/scheduler` | 1 | same |
 | Gotenberg | `gotenberg/gotenberg:8` | 1 | `GET /health` |
 | Postgres | `postgres:16-alpine` StatefulSet | 1 | `pg_isready` |
 | Redis | `redis:7-alpine` StatefulSet | 1 | `redis-cli ping` |
+| KEDA | helm chart in `keda` namespace, ScaledObjects per worker pool (§13) | 3 pods | `kubectl -n keda get pods` |
 | Ingress | `api` (networking.k8s.io/v1) routed through Traefik | — | `GET /healthz` via public IP |
-| Cloudflare Tunnel | `cloudflared` on droplet (or as a Deployment) | 1 | tunnel connection count |
+| Cloudflare Tunnel | optional — named tunnel per §4; none configured currently | — | — |
 
 Every container-app pod pulls from GHCR. The `dtq-secrets` Kubernetes Secret holds `POSTGRES_PASSWORD`, `TOKEN_ENCRYPTION_KEY`, `GOOGLE_OAUTH_CLIENT_ID`, `GOOGLE_OAUTH_CLIENT_SECRET`.
 
@@ -422,7 +423,7 @@ Guidelines based on measured behavior.
 
 | Scenario | Recommended spec |
 |---|---|
-| Personal inbox, ~100 emails/day | 1 vCPU, 2 GB RAM, 30 GB disk (Hetzner CX22, DO $12 droplet). Runs cold. |
+| Personal inbox, ~100 emails/day | 1 vCPU, 2 GB RAM, 30 GB disk minimum. In production: Hetzner cpx21 (3 vCPU / 4 GB, ~€8/mo) with headroom for KEDA scale-out. Runs cold. |
 | Personal inbox, ~1,000 emails/day | 2 vCPU, 4 GB RAM. Mostly for the Chromium renders during bursts. |
 | Multi-user, 10 users × 100 emails/day | 2 vCPU, 4 GB RAM + managed Postgres. PVC for workers must be RWX. |
 | Multi-user, 100+ users | Move Postgres + Redis to managed services (RDS + ElastiCache or equivalent). Scale render-worker to 3–5 replicas. Replace `/data` with object storage. |

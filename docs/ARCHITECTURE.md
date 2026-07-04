@@ -21,7 +21,7 @@ The "hand-rolled" part is deliberate. A library like Asynq, Machinery, or River 
 
 ## 2. The one-paragraph explanation
 
-A **scheduler** polls Gmail every 5 minutes. New messages become rows in a `pipeline_jobs` table (Postgres, source of truth) and IDs on a Redis list (queue). Stateless **workers**, one pool per stage (fetch → render → upload), `BLMOVE` an ID into a per-worker processing list, atomically claim the job row via `UPDATE … WHERE status='queued' RETURNING`, process it, and either advance to the next stage or mark it done. Workers write a short-lived heartbeat key to Redis every 5 s for their whole process lifetime. A **sweeper** scans once every 5 s for (a) running jobs whose worker heartbeat expired → requeue, (b) queued jobs whose backoff elapsed → re-push to Redis, (c) queued jobs without `last_error` that have been sitting too long → re-push (recovers lost pushes), (d) processing-list entries of dead workers → moved back to the stage queue (recovers pop-to-claim crashes). An **HTTP API** serves health + version endpoints and a live dashboard; a `/metrics` endpoint exposes Prometheus gauges for queue depth and job counts, set up to feed a future HPA. An **oauth-setup** one-shot CLI bootstraps the encrypted Google OAuth token into Postgres. All binaries build from the same Go image; Kubernetes manifests under `deploy/k8s/` apply unchanged to any k3s cluster (currently DigitalOcean today, Hetzner tomorrow).
+A **scheduler** polls Gmail every 5 minutes. New messages become rows in a `pipeline_jobs` table (Postgres, source of truth) and IDs on a Redis list (queue). Stateless **workers**, one pool per stage (fetch → render → upload), `BLMOVE` an ID into a per-worker processing list, atomically claim the job row via `UPDATE … WHERE status='queued' RETURNING`, process it, and either advance to the next stage or mark it done. Workers write a short-lived heartbeat key to Redis every 5 s for their whole process lifetime. A **sweeper** scans once every 5 s for (a) running jobs whose worker heartbeat expired → requeue, (b) queued jobs whose backoff elapsed → re-push to Redis, (c) queued jobs without `last_error` that have been sitting too long → re-push (recovers lost pushes), (d) processing-list entries of dead workers → moved back to the stage queue (recovers pop-to-claim crashes). An **HTTP API** serves health + version endpoints and a live dashboard; a `/metrics` endpoint exposes Prometheus gauges for queue depth and job counts (read by the dashboard and the loadtest chart; **KEDA** scales each worker pool 1–5 by polling Redis `LLEN` directly). An **oauth-setup** one-shot CLI bootstraps the encrypted Google OAuth token into Postgres. All binaries build from the same Go image; Kubernetes manifests under `deploy/k8s/` apply unchanged to any k3s cluster (born on DigitalOcean, now on Hetzner — the swap is a 20-minute runbook).
 
 ---
 
@@ -422,7 +422,7 @@ Drive folders don't vanish on a schedule. 24h is long enough that we never re-re
 
 Tried `go-wkhtmltopdf`, tried `gofpdf`, tried `chromedp` directly. Gotenberg wins for rendering real HTML — it's literally headless Chromium behind a small HTTP wrapper. CSS, web fonts, JavaScript (if enabled), embedded images all render faithfully. A Go-native library would produce PDFs that look like HTML from 1998.
 
-Downsides: Gotenberg is a ~200 MB container, and each render spikes memory by 100–300 MB (Chromium processes). On the $12/mo DO droplet with 2 GB RAM, one concurrent render is fine; two would push us into swap. For now, render-worker has `replicas: 1` and per-worker concurrency is 1 (one goroutine at a time in the handler). If we need more throughput, we scale render-worker horizontally and let each replica render one at a time.
+Downsides: Gotenberg is a ~200 MB container, and each render spikes memory by 100–300 MB (Chromium processes). On the €8/mo Hetzner box with 4 GB RAM, a couple of concurrent renders fit; per-worker concurrency stays at 1 (one goroutine at a time in the handler) and throughput scales horizontally — KEDA takes render-worker from 1 to 5 replicas on queue depth, each rendering one at a time.
 
 ### 5.13 `internal/handler` — stage handlers
 
@@ -573,7 +573,7 @@ Not today's problem. Documented in OPERATIONS.md §6.
 
 ### 8.3 Swap procedure (concretely)
 
-A full migration from DigitalOcean → Hetzner takes ~15 minutes end-to-end. See [OPERATIONS.md §3](./OPERATIONS.md) for the actual steps. Summary of what survives:
+The DigitalOcean → Hetzner migration took ~20 minutes end-to-end when we ran it for real. See [OPERATIONS.md §3](./OPERATIONS.md) for the actual steps. Summary of what survives:
 
 - **Application code** — zero changes.
 - **K8s manifests** — zero changes (no cloud-specific fields).

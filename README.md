@@ -6,7 +6,11 @@ A distributed task queue in Go (Redis + Postgres + Kubernetes), built to power a
 
 ## Status
 
-Phase 2 complete — queue core ships end-to-end. Postgres-backed durable state (`pipeline_jobs`, `job_status_history`), Redis-backed per-stage queues, worker binary with claim + heartbeat + exponential-backoff retries, sweeper with orphan revival and delayed-retry promotion. Gmail/Drive workers and live deployment ship in later phases. See `docs/superpowers/plans/`.
+Live in production on a Hetzner k3s cluster (~€8/mo). The full pipeline — Gmail History polling → MIME fetch → PDF render (Gotenberg) → Drive upload — runs end-to-end, with KEDA scaling each worker pool 1–5 on queue depth and the reliable-queue pop (BLMOVE into per-worker processing lists, acked after the DB settles, reclaimed by the sweeper when a worker dies).
+
+Captured evidence: [a chaos run](docs/chaos-demo-sample.txt) — worker killed mid-job, recovered in 21 s — and [a flood chart](docs/loadtest/flood-run.png) — 1,000-job burst, replicas 1→5, drained in ~50 s.
+
+Docs: [ARCHITECTURE.md](docs/ARCHITECTURE.md) (what and why), [OPERATIONS.md](docs/OPERATIONS.md) (runbooks), [WAR-STORIES.md](docs/WAR-STORIES.md) (incidents and lessons).
 
 ## Quickstart (local)
 
@@ -33,7 +37,10 @@ token. About 10 minutes of clicking.
 
 1. **Google Cloud Console:** Create (or reuse) a project. Enable the **Gmail API**
    and **Drive API**. On the OAuth consent screen, set the scopes to
-   `gmail.readonly` and `drive.file`. Add your email as a test user.
+   `gmail.readonly` and `drive.file`. Add your email as a test user — then, once
+   it works, **publish the app to production**: in Testing mode Google expires
+   refresh tokens after 7 days and the pipeline dies silently
+   ([war story #1](docs/WAR-STORIES.md)).
 
 2. **OAuth client:** Create an OAuth 2.0 Client ID, type **Desktop**.
    Add `http://localhost:8888/callback` as an authorized redirect URI.
@@ -81,9 +88,10 @@ token. About 10 minutes of clicking.
    new INBOX/PRIMARY messages and push them through the fetch → render → upload
    pipeline.
 
-7. **Where do the PDFs land?** A new folder tree at the root of your Drive:
-   `<root>/YYYY/MM/DD/`. Set `DRIVE_ROOT_FOLDER_ID` to the Drive folder ID where
-   you want this tree to live (or leave unset to land at the root).
+7. **Where do the PDFs land?** A dated folder tree:
+   `<DRIVE_ROOT_PATH>/YYYY/Month YYYY/DD Month YYYY (Weekday)/<email>/`. Set
+   `DRIVE_ROOT_PATH` (e.g. `02_GmailBackup/Gmail Backup`) and/or
+   `DRIVE_ROOT_FOLDER_ID`; leave both unset to land at the Drive root.
 
 ## Tests
 
@@ -103,7 +111,7 @@ make loadtest
 
 Spins up real Postgres + Redis containers via testcontainers-go, enqueues 5000 no-op jobs, runs 4 workers as goroutines in parallel, and asserts the whole run completes under 15 seconds. Recent runs land around 2 seconds on a dev laptop.
 
-Each job exercises the full path: insert into `pipeline_jobs`, `LPUSH` to a Redis stage list, `BRPOP` from a worker, atomic claim via `UPDATE ... RETURNING`, heartbeat goroutine, then `MarkDone`. Workers compete at Postgres and Redis, not in Go memory, so the in-process version stresses the same atomic primitives as a multi-process deployment.
+Each job exercises the full path: insert into `pipeline_jobs`, `LPUSH` to a Redis stage list, `BLMOVE` into the worker's processing list, atomic claim via `UPDATE ... RETURNING`, then `MarkDone` and ack. Workers compete at Postgres and Redis, not in Go memory, so the in-process version stresses the same atomic primitives as a multi-process deployment.
 
 ## Git hooks
 
@@ -124,16 +132,18 @@ Deep walkthrough: **[docs/ARCHITECTURE.md](docs/ARCHITECTURE.md)** — why each 
 
 Operations / runbooks: **[docs/OPERATIONS.md](docs/OPERATIONS.md)** — cloud swap, scaling, OAuth bootstrap, disaster recovery.
 
-Three-stage pipeline: `fetch` → `render` → `upload`. Each stage is an independently autoscaled Kubernetes Deployment with its own Redis queue. Postgres holds pipeline state, status history, OAuth tokens, and idempotency keys. A sweeper requeues jobs from workers that go silent for >30 s.
+War stories / incident writeups: **[docs/WAR-STORIES.md](docs/WAR-STORIES.md)** — the dead-token incident, the pop-to-claim window, the fix that nearly shipped a worse bug, and five more.
 
-Prometheus metrics are exported at `GET /metrics` — queue depth per stage, job counts per status, live worker count. Ready for Grafana or HPA.
+Three-stage pipeline: `fetch` → `render` → `upload`. Each stage is a Kubernetes Deployment with its own Redis queue, scaled 1–5 by KEDA on queue depth. Postgres holds pipeline state, status history, OAuth tokens, and idempotency keys. A sweeper requeues jobs from workers whose heartbeat expires (~15 s).
+
+Prometheus metrics are exported at `GET /metrics` — queue depth per stage, job counts per status, live worker count — feeding the dashboard and the loadtest chart (KEDA polls Redis directly).
 
 ```
                               ┌──────────────┐
                               │   Browser    │
                               │  (dashboard) │
                               └──────┬───────┘
-                                     │ HTTPS via Cloudflare Tunnel
+                                     │ HTTP via Traefik ingress
                                      ▼
                               ┌──────────────┐
        ┌─────────────────────▶│  API server  │◀── demo trigger buttons
@@ -160,7 +170,7 @@ Prometheus metrics are exported at `GET /metrics` — queue depth per stage, job
        │      (renders PDF locally)  │
        │                             │
        └─────────── scheduler ───────┘
-       (polls Gmail History every 5 min)
+       (polls Gmail History every 60 s)
 ```
 
 ## Deploy
@@ -171,18 +181,23 @@ K8s manifests under `deploy/k8s/`. Validate offline:
 make k8s-validate     # uses kubeconform — `brew install kubeconform`
 ```
 
-Production target is k3s on a single Hetzner CX22, fronted by Cloudflare Tunnel for TLS without exposing the box. Provisioning + first deploy land in Phase 1.5.
+Production is k3s on a single Hetzner cpx21 (3 vCPU / 4 GB, ~€8/mo), Traefik ingress on :80. Moving providers is a 20-minute runbook ([OPERATIONS.md §3](docs/OPERATIONS.md)) — it ran DigitalOcean → Hetzner for real. KEDA install + autoscaling: §13; loadtest + chart: §14.
 
 ## Repo layout
 
 ```
-cmd/api/             # HTTP API binary
-internal/api/        # router + handlers
+cmd/                 # api, worker (--stage flag), scheduler, sweeper, oauth-setup
+internal/queue/      # Redis ops: BLMOVE pop, ack, reclaim, heartbeats
+internal/store/      # hand-written SQL over pgx (pipeline_jobs, oauth, ...)
+internal/worker/     # claim + settle + fail-stop loop shared by all stages
+internal/sweeper/    # four recovery passes
+internal/handler/    # fetch / render / upload stage logic
+internal/gmail/ drive/ pdf/ oauth/ api/  # integrations + HTTP surface
 internal/testutil/   # testcontainers helpers (integration build tag)
-deploy/k8s/          # Kubernetes manifests (applied)
+deploy/k8s/          # Kubernetes manifests incl. KEDA ScaledObjects
 deploy/k8s-examples/ # example Secret shape (NOT applied)
-scripts/hooks/       # git pre-commit and pre-push
-docs/superpowers/    # specs and implementation plans
+scripts/             # chaos-demo, hpa-loadtest, plot, git hooks
+docs/                # ARCHITECTURE, OPERATIONS, WAR-STORIES, artifacts
 ```
 
 ## Contributing
