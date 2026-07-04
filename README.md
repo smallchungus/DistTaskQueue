@@ -211,4 +211,4 @@ This is a solo portfolio project, but the conventions are real:
 
 ## License
 
-TBD.
+Apache License 2.0. See [LICENSE](LICENSE) for details.
