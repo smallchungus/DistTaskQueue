@@ -22,7 +22,7 @@ What runs where. Current home: a Hetzner cpx21 (3 vCPU / 4 GB) running k3s.
 | Redis | `redis:7-alpine` StatefulSet | 1 | `redis-cli ping` |
 | KEDA | helm chart in `keda` namespace, ScaledObjects per worker pool (§13) | 3 pods | `kubectl -n keda get pods` |
 | Ingress | `api` (networking.k8s.io/v1) routed through Traefik | — | `GET /healthz` via public IP |
-| Cloudflare Tunnel | optional — named tunnel per §4; none configured currently | — | — |
+| TLS / public URL | `https://dtq.willchennn.com` — Route53 A record + cert-manager (Let's Encrypt), terminated by Traefik | — | `curl https://dtq.willchennn.com/healthz` |
 
 Every container-app pod pulls from GHCR. The `dtq-secrets` Kubernetes Secret holds `POSTGRES_PASSWORD`, `TOKEN_ENCRYPTION_KEY`, `GOOGLE_OAUTH_CLIENT_ID`, `GOOGLE_OAUTH_CLIENT_SECRET`.
 

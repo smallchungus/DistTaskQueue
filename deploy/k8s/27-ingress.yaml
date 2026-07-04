@@ -3,9 +3,24 @@ kind: Ingress
 metadata:
   name: api
   namespace: disttaskqueue
+  annotations:
+    cert-manager.io/cluster-issuer: letsencrypt
 spec:
   ingressClassName: traefik
+  tls:
+    - hosts: [dtq.willchennn.com]
+      secretName: dtq-tls
   rules:
+    - host: dtq.willchennn.com
+      http:
+        paths:
+          - path: /
+            pathType: Prefix
+            backend:
+              service:
+                name: api
+                port:
+                  number: 80
     - http:
         paths:
           - path: /
