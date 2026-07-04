@@ -5,6 +5,7 @@ import (
 	"encoding/base64"
 	"fmt"
 	"strconv"
+	"strings"
 	"time"
 
 	"github.com/google/uuid"
@@ -132,6 +133,51 @@ func (c *Client) ListRecent(ctx context.Context, since time.Time) ([]string, err
 		}
 		if resp.NextPageToken == "" {
 			return ids, nil
+		}
+		pageToken = resp.NextPageToken
+	}
+}
+
+// ListAllPages pages through INBOX/Primary message IDs between since and
+// before, calling page once per page in order. A zero since or before omits
+// that half of the date range from the query. Used by the operator-invoked
+// backfill command; ListRecent above covers the scheduler's own safety net.
+func (c *Client) ListAllPages(ctx context.Context, since, before time.Time, page func(ids []string) error) error {
+	var parts []string
+	if !since.IsZero() {
+		parts = append(parts, fmt.Sprintf("after:%d", since.Unix()))
+	}
+	if !before.IsZero() {
+		parts = append(parts, fmt.Sprintf("before:%d", before.Unix()))
+	}
+	query := strings.Join(parts, " ")
+
+	var pageToken string
+	for {
+		call := c.svc.Users.Messages.List("me").
+			LabelIds("INBOX", "CATEGORY_PERSONAL").
+			Context(ctx)
+		if query != "" {
+			call = call.Q(query)
+		}
+		if pageToken != "" {
+			call = call.PageToken(pageToken)
+		}
+		resp, err := call.Do()
+		if err != nil {
+			return fmt.Errorf("messages list: %w", err)
+		}
+		ids := make([]string, 0, len(resp.Messages))
+		for _, m := range resp.Messages {
+			if m != nil && m.Id != "" {
+				ids = append(ids, m.Id)
+			}
+		}
+		if err := page(ids); err != nil {
+			return err
+		}
+		if resp.NextPageToken == "" {
+			return nil
 		}
 		pageToken = resp.NextPageToken
 	}
