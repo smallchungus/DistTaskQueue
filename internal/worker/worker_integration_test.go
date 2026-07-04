@@ -161,7 +161,7 @@ func TestProcessOne_AdvancesToNextStage(t *testing.T) {
 		t.Fatalf("stage/status: %s/%s, want render/queued", got.Stage, got.Status)
 	}
 
-	popped, err := h.queue.BlockingPop(ctx, "render", 500*time.Millisecond)
+	popped, err := h.queue.BlockingPop(ctx, "render", "w-verify", 500*time.Millisecond)
 	if err != nil {
 		t.Fatalf("expected pushed to render: %v", err)
 	}

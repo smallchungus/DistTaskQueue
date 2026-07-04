@@ -45,7 +45,7 @@ func (w *Worker) Run(ctx context.Context) error {
 }
 
 func (w *Worker) ProcessOne(ctx context.Context) (didWork bool, err error) {
-	rawID, err := w.cfg.Queue.BlockingPop(ctx, w.cfg.Stage, w.cfg.PopTimeout)
+	rawID, err := w.cfg.Queue.BlockingPop(ctx, w.cfg.Stage, w.cfg.WorkerID, w.cfg.PopTimeout)
 	if errors.Is(err, queue.ErrEmpty) {
 		return false, nil
 	}

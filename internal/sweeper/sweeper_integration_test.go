@@ -92,7 +92,7 @@ func TestSweepOnce_PromotesDelayedRetryToRedisQueue(t *testing.T) {
 		t.Fatalf("queue depth: before=%d after=%d, want +1", depthBefore, depthAfter)
 	}
 
-	popped, err := q.BlockingPop(ctx, "test", 1*time.Second)
+	popped, err := q.BlockingPop(ctx, "test", "w-verify", 1*time.Second)
 	if err != nil {
 		t.Fatalf("pop: %v", err)
 	}
@@ -120,7 +120,7 @@ func TestSweepOnce_RepushesStaleQueuedJob(t *testing.T) {
 	if depthAfter != depthBefore+1 {
 		t.Fatalf("depth: before=%d after=%d, want +1", depthBefore, depthAfter)
 	}
-	popped, err := q.BlockingPop(ctx, "fetch", 1*time.Second)
+	popped, err := q.BlockingPop(ctx, "fetch", "w-verify", 1*time.Second)
 	if err != nil {
 		t.Fatalf("pop: %v", err)
 	}
