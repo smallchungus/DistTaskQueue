@@ -35,5 +35,8 @@ docker-up: ## Start local dev stack (api, postgres, redis)
 docker-down: ## Stop local dev stack
 	docker compose down -v
 
-k8s-validate: ## Validate k8s manifests offline (requires kubeconform)
-	kubeconform -summary -strict deploy/k8s/
+k8s-validate: ## Validate k8s manifests (requires kubeconform; fetches CRD schemas)
+	kubeconform -summary -strict \
+	  -schema-location default \
+	  -schema-location 'https://raw.githubusercontent.com/datreeio/CRDs-catalog/main/{{.Group}}/{{.ResourceKind}}_{{.ResourceAPIVersion}}.json' \
+	  deploy/k8s/
