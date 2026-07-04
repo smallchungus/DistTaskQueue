@@ -16,7 +16,8 @@ Build a distributed task queue (Go, Redis, Postgres, Docker, k3s, GitHub Actions
 ### In scope (v1)
 
 - Multi-stage queue pipeline (`fetch` → `render` → `upload`), three independent worker pools.
-- Continuous forward-sync of Gmail primary inbox (no backfill of existing archive).
+- Continuous forward-sync of Gmail primary inbox — this is the steady state; the scheduler never backfills on its own.
+- Operator-invoked historical backfill: a one-shot command to import an existing inbox, separate from the scheduler (see §4, "Operator-invoked historical backfill").
 - One PDF per email, attachments preserved as original files, grouped per email.
 - Drive folder layout: `<root>/YYYY/MM/DD/<email-folder>/{email.pdf, <original attachments>}`.
 - Heartbeat-based failure recovery (5 s heartbeat, 30 s sweeper threshold, at-least-once).
@@ -29,7 +30,7 @@ Build a distributed task queue (Go, Redis, Postgres, Docker, k3s, GitHub Actions
 ### Out of scope (v1)
 
 - Multi-user signup UX, OAuth verification with Google for sensitive scopes (Gmail-read).
-- Backfill of existing inbox archive.
+- Automatic backfill as part of steady-state sync — the scheduler stays forward-sync-only; backfill only happens via the explicit operator-invoked command (§4).
 - OCR on attachments.
 - Email search / browse UI.
 - Selective rules / per-label filtering. v1 syncs everything in primary inbox.
@@ -119,6 +120,27 @@ Build a distributed task queue (Go, Redis, Postgres, Docker, k3s, GitHub Actions
 3. **Render worker:** Same claim+heartbeat pattern. Reads MIME, parses headers + HTML body, posts to Gotenberg `/forms/chromium/convert/html`, writes resulting PDF to `/data/pdf/<job_id>.pdf`. Extracts attachments from MIME, writes to `/data/attachments/<job_id>/`. Hands off to `queue:upload`.
 4. **Upload worker:** Reads PDF + attachments. Resolves Drive folder path `<root>/YYYY/MM/DD/<email-folder>/` (creates folders idempotently via Drive API, caches folder IDs in Redis). Uploads PDF and each attachment. On success, sets `pipeline_jobs.status='done', completed_at=now()`. Inserts into `processed_emails (user_id, gmail_message_id)`. GC'd from disk by retention sweep.
 5. **At any stage, if the worker crashes:** Heartbeat TTL expires. If the job was claimed (`status='running'`), the sweeper increments `attempts`, schedules requeue for `now() + backoff(attempts)`, sets `status='queued'`. If the worker died between pop and claim, the job ID is still in `processing:<stage>:<worker_id>`; the sweeper moves it back to `queue:<stage>`. Both paths can push a duplicate ID; the conditional claim absorbs it.
+
+### Operator-invoked historical backfill
+
+The scheduler stays forward-sync-only — it would take years of archive and
+burn the account's Gmail quota to backfill automatically on first sync.
+Importing an existing inbox is instead a deliberate, one-shot action the
+operator runs by hand (`cmd/backfill`):
+
+- Pages `users.messages.list` for a date range, and enqueues a `fetch` job
+  per message ID on each page using the same idempotency check the
+  scheduler uses (`HasJobForMessage` before `EnqueueJob` + queue push) — a
+  re-run after an interrupt only enqueues what's still missing.
+- Pauses before each page while `queue:fetch` depth exceeds a configurable
+  cap (default 500), polling until the fetch workers drain it, so the
+  backfill can never outrun the rest of the pipeline.
+- Quota math: `messages.list` costs 5 units per page of up to 100 IDs;
+  fetching the raw message (`messages.get`) costs 5 units per message.
+  Gmail's per-user limit is 250 units/second — enough for roughly 50
+  raw-message fetches/second, far more than a single render worker
+  (Chromium via Gotenberg) can keep up with. The render stage, not Gmail
+  quota, is the real throttle on backfill throughput.
 
 ## 5. Data model
 
