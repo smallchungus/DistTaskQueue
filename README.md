@@ -10,11 +10,16 @@ Live in production on a Hetzner k3s cluster (~€8/mo). The full pipeline — Gm
 
 Captured evidence: [a chaos run](docs/chaos-demo-sample.txt) — worker killed mid-job, recovered in 21 s — and [a flood chart](docs/loadtest/flood-run.png) — 1,000-job burst, replicas 1→5, drained in ~50 s.
 
-Docs: [ARCHITECTURE.md](docs/ARCHITECTURE.md) (what and why), [OPERATIONS.md](docs/OPERATIONS.md) (runbooks), [WAR-STORIES.md](docs/WAR-STORIES.md) (incidents and lessons).
+Docs: [SELF-HOSTING.md](docs/SELF-HOSTING.md) (run it yourself), [ARCHITECTURE.md](docs/ARCHITECTURE.md) (what and why), [OPERATIONS.md](docs/OPERATIONS.md) (runbooks), [WAR-STORIES.md](docs/WAR-STORIES.md) (incidents and lessons).
 
-## Quickstart (local)
+## Quickstart
 
-Prereqs: Go 1.25+, Docker.
+Want the real Gmail → Drive pipeline running on your own machine? See
+**[docs/SELF-HOSTING.md](docs/SELF-HOSTING.md)** — one `docker compose up`,
+a Google Cloud OAuth client, about 10 minutes.
+
+For contributors hacking on the API/dashboard without the Gmail/Drive
+pipeline, a lighter local stack (api + postgres + redis) is enough:
 
 ```bash
 make docker-up        # brings up api + postgres + redis on docker compose
@@ -28,70 +33,6 @@ Run the API directly without Docker:
 ```bash
 make run
 ```
-
-## Real Gmail → Drive setup (one-time)
-
-If you want to actually run the Gmail-to-Drive sync (rather than just synthetic
-loadtest jobs), you need to set up a Google Cloud OAuth client and bootstrap a
-token. About 10 minutes of clicking.
-
-1. **Google Cloud Console:** Create (or reuse) a project. Enable the **Gmail API**
-   and **Drive API**. On the OAuth consent screen, set the scopes to
-   `gmail.readonly` and `drive.file`. Add your email as a test user — then, once
-   it works, **publish the app to production**: in Testing mode Google expires
-   refresh tokens after 7 days and the pipeline dies silently
-   ([war story #1](docs/WAR-STORIES.md)).
-
-2. **OAuth client:** Create an OAuth 2.0 Client ID, type **Desktop**.
-   Add `http://localhost:8888/callback` as an authorized redirect URI.
-   Note the client ID and secret.
-
-3. **Encryption key:** Generate a 32-byte random key:
-
-   ```bash
-   openssl rand -base64 32
-   ```
-
-   Save it; the same value is needed by both `oauth-setup` and the workers/scheduler.
-
-4. **Bring up the local stack:**
-
-   ```bash
-   make docker-up
-   ```
-
-5. **Bootstrap your OAuth token:**
-
-   ```bash
-   export DATABASE_URL='postgres://dtq:dtq@localhost:5432/dtq?sslmode=disable'
-   export GOOGLE_OAUTH_CLIENT_ID='...'
-   export GOOGLE_OAUTH_CLIENT_SECRET='...'
-   export TOKEN_ENCRYPTION_KEY='<the base64 key>'
-   go run ./cmd/oauth-setup --email=you@example.com
-   ```
-
-   Open the printed URL in a browser, authorize the app, the helper exits with
-   "Token saved".
-
-6. **Run the workers + scheduler:**
-
-   ```bash
-   # in one terminal each, or via docker compose:
-   ./worker --stage=fetch
-   ./worker --stage=render
-   ./worker --stage=upload
-   ./scheduler
-   ```
-
-   On the first poll the scheduler initializes your cursor from your current
-   Gmail history ID (no backfill of existing inbox). Subsequent polls pick up
-   new INBOX/PRIMARY messages and push them through the fetch → render → upload
-   pipeline.
-
-7. **Where do the PDFs land?** A dated folder tree:
-   `<DRIVE_ROOT_PATH>/YYYY/Month YYYY/DD Month YYYY (Weekday)/<email>/`. Set
-   `DRIVE_ROOT_PATH` (e.g. `02_GmailBackup/Gmail Backup`) and/or
-   `DRIVE_ROOT_FOLDER_ID`; leave both unset to land at the Drive root.
 
 ## Tests
 

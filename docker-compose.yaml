@@ -38,6 +38,7 @@ services:
       args:
         VERSION: dev
         COMMIT: local
+    env_file: .env
     environment:
       API_ADDR: ":8080"
       DATABASE_URL: "postgres://dtq:dtq@postgres:5432/dtq?sslmode=disable"
@@ -48,6 +49,116 @@ services:
       postgres: { condition: service_healthy }
       redis: { condition: service_healthy }
 
+  worker-fetch:
+    image: ghcr.io/smallchungus/disttaskqueue-api:latest
+    # build:
+    #   context: .
+    #   args:
+    #     VERSION: dev
+    #     COMMIT: local
+    entrypoint: ["/worker"]
+    command: ["--stage=fetch"]
+    env_file: .env
+    environment:
+      DATABASE_URL: "postgres://dtq:dtq@postgres:5432/dtq?sslmode=disable"
+      REDIS_URL: "redis://redis:6379/0"
+    volumes:
+      - dtq-data:/data
+    depends_on:
+      postgres: { condition: service_healthy }
+      redis: { condition: service_healthy }
+
+  worker-render:
+    image: ghcr.io/smallchungus/disttaskqueue-api:latest
+    # build:
+    #   context: .
+    #   args:
+    #     VERSION: dev
+    #     COMMIT: local
+    entrypoint: ["/worker"]
+    command: ["--stage=render"]
+    env_file: .env
+    environment:
+      DATABASE_URL: "postgres://dtq:dtq@postgres:5432/dtq?sslmode=disable"
+      REDIS_URL: "redis://redis:6379/0"
+      GOTENBERG_URL: "http://gotenberg:3000"
+    volumes:
+      - dtq-data:/data
+    depends_on:
+      postgres: { condition: service_healthy }
+      redis: { condition: service_healthy }
+      gotenberg:
+        condition: service_started
+
+  worker-upload:
+    image: ghcr.io/smallchungus/disttaskqueue-api:latest
+    # build:
+    #   context: .
+    #   args:
+    #     VERSION: dev
+    #     COMMIT: local
+    entrypoint: ["/worker"]
+    command: ["--stage=upload"]
+    env_file: .env
+    environment:
+      DATABASE_URL: "postgres://dtq:dtq@postgres:5432/dtq?sslmode=disable"
+      REDIS_URL: "redis://redis:6379/0"
+    volumes:
+      - dtq-data:/data
+    depends_on:
+      postgres: { condition: service_healthy }
+      redis: { condition: service_healthy }
+
+  scheduler:
+    image: ghcr.io/smallchungus/disttaskqueue-api:latest
+    # build:
+    #   context: .
+    #   args:
+    #     VERSION: dev
+    #     COMMIT: local
+    entrypoint: ["/scheduler"]
+    env_file: .env
+    environment:
+      DATABASE_URL: "postgres://dtq:dtq@postgres:5432/dtq?sslmode=disable"
+      REDIS_URL: "redis://redis:6379/0"
+    depends_on:
+      postgres: { condition: service_healthy }
+      redis: { condition: service_healthy }
+
+  sweeper:
+    image: ghcr.io/smallchungus/disttaskqueue-api:latest
+    # build:
+    #   context: .
+    #   args:
+    #     VERSION: dev
+    #     COMMIT: local
+    entrypoint: ["/sweeper"]
+    env_file: .env
+    environment:
+      DATABASE_URL: "postgres://dtq:dtq@postgres:5432/dtq?sslmode=disable"
+      REDIS_URL: "redis://redis:6379/0"
+    depends_on:
+      postgres: { condition: service_healthy }
+      redis: { condition: service_healthy }
+
+  oauth-setup:
+    image: ghcr.io/smallchungus/disttaskqueue-api:latest
+    # build:
+    #   context: .
+    #   args:
+    #     VERSION: dev
+    #     COMMIT: local
+    profiles: ["setup"]
+    entrypoint: ["/oauth-setup"]
+    env_file: .env
+    environment:
+      DATABASE_URL: "postgres://dtq:dtq@postgres:5432/dtq?sslmode=disable"
+    ports:
+      - "8888:8888"
+    depends_on:
+      postgres: { condition: service_healthy }
+
 volumes:
   pg-data:
   redis-data:
+  dtq-data:
