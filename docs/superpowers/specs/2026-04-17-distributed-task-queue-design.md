@@ -108,16 +108,17 @@ Build a distributed task queue (Go, Redis, Postgres, Docker, k3s, GitHub Actions
 ## 4. Data flow (one email, end to end)
 
 1. **Scheduler tick (every 5 min):** Calls Gmail `users.history.list` with the saved `historyId` for the user. For each new `messagesAdded` whose label includes `INBOX` and category is `CATEGORY_PERSONAL`, inserts a row into `pipeline_jobs` with `stage='fetch', status='queued'` and pushes the job ID to `queue:fetch`. Updates the saved `historyId`.
-2. **Fetch worker:** `BLPOP queue:fetch` with 30 s timeout. On hit:
+2. **Fetch worker:** `BLMOVE queue:fetch processing:fetch:<worker_id> RIGHT LEFT` with 30 s timeout. The pop is a move, not a removal: until the worker acks, the job ID survives in the worker's processing list. On hit:
    1. Atomically claim job in Postgres (`UPDATE pipeline_jobs SET status='running', worker_id=…, claimed_at=now() WHERE id=$1 AND status='queued' RETURNING …`).
-   2. Begin heartbeat goroutine (writes to `heartbeat:<worker_id>` in Redis every 5 s with TTL 15 s).
-   3. Fetch Gmail message in `format=raw`.
-   4. Write MIME bytes to `/data/mime/<job_id>.eml`.
-   5. Update job: `stage='render', status='queued'`. `LPUSH queue:render <job_id>`.
-   6. Stop heartbeat. Worker loops back to BLPOP.
+   2. Fetch Gmail message in `format=raw`.
+   3. Write MIME bytes to `/data/mime/<job_id>.eml`.
+   4. Update job: `stage='render', status='queued'`. `LPUSH queue:render <job_id>`.
+   5. Ack: `LREM processing:fetch:<worker_id> 1 <job_id>`. Worker loops back to BLMOVE.
+
+   Workers heartbeat for their whole process lifetime — `heartbeat:<worker_id>` written every 5 s with TTL 15 s, starting before the first pop — not per job. A worker that dies at any point after the pop leaves the job ID in its processing list until the ack; once its heartbeat expires the sweeper moves the entry back to the stage queue.
 3. **Render worker:** Same claim+heartbeat pattern. Reads MIME, parses headers + HTML body, posts to Gotenberg `/forms/chromium/convert/html`, writes resulting PDF to `/data/pdf/<job_id>.pdf`. Extracts attachments from MIME, writes to `/data/attachments/<job_id>/`. Hands off to `queue:upload`.
 4. **Upload worker:** Reads PDF + attachments. Resolves Drive folder path `<root>/YYYY/MM/DD/<email-folder>/` (creates folders idempotently via Drive API, caches folder IDs in Redis). Uploads PDF and each attachment. On success, sets `pipeline_jobs.status='done', completed_at=now()`. Inserts into `processed_emails (user_id, gmail_message_id)`. GC'd from disk by retention sweep.
-5. **At any stage, if the worker crashes:** Heartbeat TTL expires. Sweeper finds the orphaned job (`status='running'` AND no live heartbeat), increments `attempts`, schedules requeue for `now() + backoff(attempts)`, sets `status='queued'`.
+5. **At any stage, if the worker crashes:** Heartbeat TTL expires. If the job was claimed (`status='running'`), the sweeper increments `attempts`, schedules requeue for `now() + backoff(attempts)`, sets `status='queued'`. If the worker died between pop and claim, the job ID is still in `processing:<stage>:<worker_id>`; the sweeper moves it back to `queue:<stage>`. Both paths can push a duplicate ID; the conditional claim absorbs it.
 
 ## 5. Data model
 
@@ -199,7 +200,8 @@ CREATE TABLE processed_emails (
 
 | Key | Type | Purpose |
 |---|---|---|
-| `queue:fetch`, `queue:render`, `queue:upload` | LIST | Per-stage job queues. Workers `BLPOP`. |
+| `queue:fetch`, `queue:render`, `queue:upload` | LIST | Per-stage job queues. Workers `BLMOVE` into their processing list. |
+| `processing:<stage>:<worker_id>` | LIST | In-flight pop guard. Emptied by worker ack (`LREM`) or swept back to the stage queue once the worker's heartbeat is gone. |
 | `queue:delayed` | ZSET | Jobs waiting for backoff. Score = unix epoch of `next_run_at`. A small "promoter" loop in the sweeper moves due jobs into the per-stage list. |
 | `heartbeat:<worker_id>` | STRING (TTL 15 s) | Worker liveness. Written every 5 s. Sweeper checks for absence. |
 | `drive_folder_cache:<user_id>:<path>` | STRING | Cached Drive folder IDs to avoid round trips. |
