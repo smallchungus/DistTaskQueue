@@ -1,0 +1,40 @@
+apiVersion: batch/v1
+kind: CronJob
+metadata:
+  name: pg-backup
+  namespace: disttaskqueue
+spec:
+  schedule: "50 3 * * *"
+  concurrencyPolicy: Forbid
+  successfulJobsHistoryLimit: 1
+  failedJobsHistoryLimit: 2
+  jobTemplate:
+    spec:
+      template:
+        spec:
+          restartPolicy: Never
+          containers:
+            - name: backup
+              image: postgres:16-alpine
+              env:
+                - name: PGPASSWORD
+                  valueFrom:
+                    secretKeyRef: { name: dtq-secrets, key: POSTGRES_PASSWORD }
+              command:
+                - /bin/sh
+                - -c
+                - |
+                  set -e
+                  mkdir -p /data/backups
+                  f="/data/backups/dtq-$(date +%F).sql.gz"
+                  pg_dump -h postgres -U dtq dtq | gzip > "$f"
+                  test -s "$f"
+                  find /data/backups -name '*.sql.gz' -mtime +7 -delete
+                  ls -la /data/backups
+              volumeMounts:
+                - name: data
+                  mountPath: /data
+          volumes:
+            - name: data
+              persistentVolumeClaim:
+                claimName: dtq-data

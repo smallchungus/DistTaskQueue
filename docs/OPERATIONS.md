@@ -408,12 +408,10 @@ Future: Grafana dashboard fed by Prometheus. Not built; one-day task when we add
 
 ## 10. Backup & disaster recovery
 
-Not implemented today. What you'd add for real prod:
-
-- **Postgres:** logical backups via `pg_dump` on a CronJob, shipped to S3/GCS. Point-in-time recovery via WAL shipping (beyond k3s scope — use a managed Postgres for this).
+- **Postgres:** nightly `pg_dump | gzip` via the `pg-backup` CronJob (`deploy/k8s/31-pg-backup.yaml`, 03:50 UTC) to `/data/backups/`, 7-day rotation. Restore: `gunzip -c /data/backups/dtq-<date>.sql.gz | psql -h postgres -U dtq dtq` (run inside the postgres pod or a psql pod). Caveat stated plainly: the dump lives on the same node's disk, so this protects against DB corruption or accidental deletion, not node loss. Node loss recovery = re-provision (§3) + `oauth-setup` re-auth.
 - **Redis:** not backed up. It holds ephemeral queue state + folder cache. Loss means the sweeper re-pushes queued jobs from Postgres; folder cache rebuilds from Drive lookups on next upload. Acceptable.
-- **`TOKEN_ENCRYPTION_KEY`:** the one piece of irreplaceable infra state. Back it up to a separate secure location (1Password, AWS Secrets Manager, a vault). Loss = users must re-run `oauth-setup`.
-- **Data volume (`DATA_DIR`):** in-flight MIME/PDF/attachments. Loss means the scheduler re-enqueues on next poll (forward-sync advances the cursor AFTER emails are processed, so unprocessed emails are still at `historyId <= cursor` and re-sync). Accept the loss.
+- **`TOKEN_ENCRYPTION_KEY`:** the one piece of irreplaceable infra state. Keep a copy in a password manager (1Password etc.) — the cluster Secret is not a backup of itself. Loss = users must re-run `oauth-setup`.
+- **Data volume (`DATA_DIR`):** in-flight MIME/PDF/attachments. Loss means the scheduler re-enqueues on next poll (forward-sync advances the cursor AFTER emails are processed, so unprocessed emails are still at `historyId <= cursor` and re-sync). Accept the loss. Files older than 7 days are deleted daily by the `data-gc` CronJob (`deploy/k8s/30-data-gc.yaml`) so the 30 GB volume never fills.
 
 ---
 
