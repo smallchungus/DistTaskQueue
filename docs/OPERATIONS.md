@@ -483,3 +483,26 @@ Inspect scaling state:
     kubectl -n disttaskqueue describe scaledobject worker-test
 
 To load-test the scaler and produce the chart, see §14.
+
+---
+
+## 14. Runbook — flood loadtest with scaling chart
+
+Fires /api/demo/flood (1000 synthetic jobs, 250 ms each) while sampling
+queue depth and worker-test replicas every 2 s, then renders the chart.
+
+    kubectl -n disttaskqueue port-forward svc/api 8080:80 &
+    export API_URL=http://localhost:8080
+    OUT=docs/loadtest/flood-run.csv DURATION_SEC=540 ./scripts/hpa-loadtest.sh
+    python3 scripts/plot-loadtest.py docs/loadtest/flood-run.csv docs/loadtest/flood-run.png
+
+Knobs: DURATION_SEC (default 300), NAMESPACE (default disttaskqueue).
+Expect: depth spikes toward 1000, replicas step 1 -> 5 within ~30 s, the
+drain accelerates, and replicas return to 1 roughly 5 minutes after the
+queue empties (HPA downscale stabilization; KEDA's cooldownPeriod only
+applies when scaling from/to zero). A captured run lives in
+docs/loadtest/. Requires the KEDA ScaledObjects from §13.
+
+Depth is sampled from the api /metrics gauge, which refreshes every 10 s —
+bursts that drain faster than that window won't appear in the chart even
+though KEDA (which polls Redis directly) reacts to them.
