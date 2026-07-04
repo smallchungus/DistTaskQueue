@@ -21,7 +21,7 @@ The "hand-rolled" part is deliberate. A library like Asynq, Machinery, or River 
 
 ## 2. The one-paragraph explanation
 
-A **scheduler** polls Gmail every 5 minutes. New messages become rows in a `pipeline_jobs` table (Postgres, source of truth) and IDs on a Redis list (queue). Stateless **workers**, one pool per stage (fetch → render → upload), `BLPOP` an ID off the queue, atomically claim the job row via `UPDATE … WHERE status='queued' RETURNING`, process it, and either advance to the next stage or mark it done. Workers write a short-lived heartbeat key to Redis every 5 s while processing. A **sweeper** scans once every 5 s for (a) running jobs whose worker heartbeat expired → requeue, (b) queued jobs whose backoff elapsed → re-push to Redis, (c) queued jobs without `last_error` that have been sitting too long → re-push (recovers `BLPOP`-to-claim crashes). An **HTTP API** serves health + version endpoints and a live dashboard; a `/metrics` endpoint exposes Prometheus gauges for queue depth and job counts, set up to feed a future HPA. An **oauth-setup** one-shot CLI bootstraps the encrypted Google OAuth token into Postgres. All binaries build from the same Go image; Kubernetes manifests under `deploy/k8s/` apply unchanged to any k3s cluster (currently DigitalOcean today, Hetzner tomorrow).
+A **scheduler** polls Gmail every 5 minutes. New messages become rows in a `pipeline_jobs` table (Postgres, source of truth) and IDs on a Redis list (queue). Stateless **workers**, one pool per stage (fetch → render → upload), `BLMOVE` an ID into a per-worker processing list, atomically claim the job row via `UPDATE … WHERE status='queued' RETURNING`, process it, and either advance to the next stage or mark it done. Workers write a short-lived heartbeat key to Redis every 5 s for their whole process lifetime. A **sweeper** scans once every 5 s for (a) running jobs whose worker heartbeat expired → requeue, (b) queued jobs whose backoff elapsed → re-push to Redis, (c) queued jobs without `last_error` that have been sitting too long → re-push (recovers lost pushes), (d) processing-list entries of dead workers → moved back to the stage queue (recovers pop-to-claim crashes). An **HTTP API** serves health + version endpoints and a live dashboard; a `/metrics` endpoint exposes Prometheus gauges for queue depth and job counts, set up to feed a future HPA. An **oauth-setup** one-shot CLI bootstraps the encrypted Google OAuth token into Postgres. All binaries build from the same Go image; Kubernetes manifests under `deploy/k8s/` apply unchanged to any k3s cluster (currently DigitalOcean today, Hetzner tomorrow).
 
 ---
 
@@ -45,11 +45,11 @@ A secondary benefit: surgical retries. A 503 from the Drive upload API shouldn't
 
 ### 3.2 Why Postgres is the source of truth and Redis is a cache-like queue
 
-Redis is an excellent queue: `LPUSH` + `BLPOP` is a literal textbook producer/consumer pattern, latency is microseconds, and horizontal reads scale linearly. What Redis is **bad** at is authoritative state. A job claimed from Redis and then processed by a worker that dies before reporting back has no durable record that it ever existed.
+Redis is an excellent queue: `LPUSH` + `BLMOVE` is a literal textbook producer/consumer pattern, latency is microseconds, and horizontal reads scale linearly. What Redis is **bad** at is authoritative state. A job claimed from Redis and then processed by a worker that dies before reporting back has no durable record that it ever existed.
 
 Postgres fixes that. Every job is a `pipeline_jobs` row created by the scheduler before the Redis push. Claims are `UPDATE pipeline_jobs SET status='running', worker_id=…, claimed_at=now() WHERE id=$1 AND status='queued' RETURNING id` — atomic by Postgres's row-level locking. The Redis list holds only the *job ID*; the job itself lives in Postgres and survives any Redis scenario.
 
-The consequence: the system can tolerate Redis losing its in-memory queue (e.g., a pod restart without persistence) as long as the sweeper can find `status='queued'` rows and re-push them. It does. That's the "BLPOP-to-claim race" recovery path explained later.
+The consequence: the system can tolerate Redis losing its in-memory queue (e.g., a pod restart without persistence) as long as the sweeper can find `status='queued'` rows and re-push them. It does. That's the "pop-to-claim race" recovery path explained later.
 
 Alternative rejected: Redis streams with consumer groups. Streams give you durability (optional AOF persistence), consumer groups, and per-message ACKs. Functionally they solve the same problem. Two reasons I didn't use them:
 
@@ -106,10 +106,9 @@ for _, u := range users {
 
 `worker --stage=fetch` runs `internal/handler.FetchHandler.Process()`. The worker framework (`internal/worker/worker.go`) does the same dance for every stage:
 
-1. `queue.BlockingPop(ctx, "fetch", 30s)` → get a job ID off `queue:fetch`. BLPOP, not LPOP, so workers idle without burning CPU.
+1. `queue.BlockingPop(ctx, "fetch", workerID, 30s)` → `BLMOVE queue:fetch processing:fetch:<workerID> RIGHT LEFT`. Blocking, so workers idle without burning CPU — and the popped ID survives in the processing list until the worker acks, so a crash between pop and claim loses nothing.
 2. Parse the UUID, call `store.ClaimJob(ctx, id, workerID)`. This is the atomic step: the SQL is `UPDATE … WHERE id=$1 AND status='queued'`. If a race lost (two workers popped the same ID somehow, or the sweeper already promoted it elsewhere), rows-affected is 0 and we get `ErrJobNotClaimable` — log, drop, move on.
-3. Spawn a heartbeat goroutine: `Queue.Heartbeat(ctx, workerID, 15s)` called every 5 s from a ticker, cancelled when the handler returns.
-4. Call the stage's `Handler.Process(ctx, job)`. For fetch, that's:
+3. Call the stage's `Handler.Process(ctx, job)`. For fetch, that's:
 
 ```go
 client := gmail.New(ctx, ...)                      // fresh per job, cheap
@@ -118,8 +117,8 @@ os.WriteFile(<DataDir>/mime/<jobID>.eml, raw, 0600)
 return "render", nil                                 // advance to next stage
 ```
 
-5. Worker sees non-empty `nextStage`, calls `store.AdvanceJob(jobID, "render")` which does `UPDATE … SET stage='render', status='queued', worker_id=NULL`. Then `queue.Push(ctx, "render", jobID)`.
-6. Heartbeat goroutine cancelled. Loop back to BLPOP.
+4. Worker sees non-empty `nextStage`, calls `store.AdvanceJob(jobID, "render")` which does `UPDATE … SET stage='render', status='queued', worker_id=NULL`. Then `queue.Push(ctx, "render", jobID)`.
+5. Ack: `LREM processing:fetch:<workerID> 1 <jobID>` (deferred — runs on every settle path: done, advanced, failed, claim race lost). Loop back to BLMOVE.
 
 ### Step 3 — Render worker builds the PDF
 
@@ -229,16 +228,16 @@ Downsides: the image is bigger than it strictly needs to be (every worker pod ca
 **Lifecycle:**
 
 ```
+go heartbeatLoop(ctx)                            // writes heartbeat key every 5s, for the worker's whole process lifetime
+
 for {
     ctx.Done ? return
     id := queue.BlockingPop(ctx, stage, PopTimeout)  // idle here
     if err == ErrEmpty { continue }
+    defer queue.Ack(ctx, stage, workerID, id)        // LREM from the processing list; runs on every path below
     job, _ := store.ClaimJob(ctx, id, workerID)
     if err == ErrJobNotClaimable { continue }   // race, not a problem
-    hbCtx, cancel := ctx with context.Cancel
-    go heartbeatLoop(hbCtx)                      // writes heartbeat key every 5s
     nextStage, err := handler.Process(ctx, job)
-    cancel()                                     // stops the heartbeat goroutine
     if err != nil {
         store.MarkFailed(job.ID, err, now + backoff(attempts+1))
         continue
@@ -252,7 +251,7 @@ for {
 }
 ```
 
-**Graceful shutdown.** `ctx` in the outer loop is `signal.NotifyContext(ctx, SIGINT, SIGTERM)`. When Kubernetes sends SIGTERM (30 s before SIGKILL), the outer context cancels. In-flight handlers receive the cancel and can abort cleanly; BLPOP returns quickly because its own timeout is bounded by the context. The worker finishes the current job (at most PopTimeout + handler duration), then exits. Pods roll without job loss.
+**Graceful shutdown.** `ctx` in the outer loop is `signal.NotifyContext(ctx, SIGINT, SIGTERM)`. When Kubernetes sends SIGTERM (30 s before SIGKILL), the outer context cancels. In-flight handlers receive the cancel and can abort cleanly; BLMOVE returns quickly because its own timeout is bounded by the context. The worker finishes the current job (at most PopTimeout + handler duration), then exits. Pods roll without job loss.
 
 **Handler interface:**
 
@@ -271,21 +270,22 @@ The two-value return was a refactor during Phase 3E. The original interface retu
 
 ### 5.3 `cmd/sweeper`
 
-**What:** Runs `SweepOnce` every 5 s. Three passes per sweep:
+**What:** Runs `SweepOnce` every 5 s. Four passes per sweep:
 
-1. **Orphan revival.** `SELECT … WHERE status='running'`. For each row, check `EXISTS heartbeat:<worker_id>` in Redis. If absent, call `MarkFailed(id, "worker died", now())`. Status flips back to `queued` (or `dead` if max attempts reached).
-2. **Delayed-retry promotion.** `SELECT … WHERE status='queued' AND last_error IS NOT NULL AND next_run_at <= now()`. For each, `queue.Push(stage, id)`. These are jobs that failed, backed off, and whose backoff just elapsed.
-3. **Stale-queued revival.** `SELECT … WHERE status='queued' AND last_error IS NULL AND created_at < now() - interval`. Recovers jobs whose Redis push got consumed by a worker that crashed before `ClaimJob` — the worker BLPOPed the ID off the queue, then died, so the ID is gone from Redis but the row is still `queued` with no error. Sweeper re-pushes.
+1. **Processing reclaim.** `SCAN processing:*`. For each `processing:<stage>:<worker_id>` list whose worker heartbeat is absent, `LMOVE` every entry back to `queue:<stage>`. Recovers jobs whose worker died after popping but before acking.
+2. **Orphan revival.** `SELECT … WHERE status='running'`. For each row, check `EXISTS heartbeat:<worker_id>` in Redis. If absent, call `MarkFailed(id, "worker died", now())`. Status flips back to `queued` (or `dead` if max attempts reached).
+3. **Delayed-retry promotion.** `SELECT … WHERE status='queued' AND last_error IS NOT NULL AND next_run_at <= now()`. For each, `queue.Push(stage, id)`. These are jobs that failed, backed off, and whose backoff just elapsed.
+4. **Stale-queued revival.** `SELECT … WHERE status='queued' AND last_error IS NULL AND created_at < now() - interval`. Recovers jobs whose Redis push never landed or got lost — the pop-to-claim crash is now covered by the processing reclaim, so this pass is the backstop for missing pushes. Sweeper re-pushes.
 
-**Why three passes instead of a single unified query:**
+**Why four passes instead of a single unified query:**
 
-Each pass has a different trigger predicate and a different action. Collapsing them into one query makes the SQL harder to read and the failure modes harder to reason about. Three short methods beat one clever one.
+Each pass has a different trigger predicate and a different action. Collapsing them into one query makes the SQL harder to read and the failure modes harder to reason about. Four short methods beat one clever one.
 
 **Why 5 s instead of, say, 1 s or 60 s:**
 
 Recovery latency = interval. At 5 s, worker-crash recovery is within ~20 s worst case (heartbeat TTL 15 s + sweep interval 5 s). Faster sweeps mean more Postgres load; 5 s is a cheap compromise that still looks responsive on the dashboard. Each sweep is a handful of indexed queries against `pipeline_jobs`, so the load is trivial until the table has tens of millions of rows.
 
-**Duplicate pushes are safe.** If the sweeper pushes an ID that's already in Redis (e.g., a worker hasn't yet consumed it), two workers end up BLPOP-ing different ends of the queue and both try to claim. Postgres's `UPDATE … WHERE status='queued'` only succeeds for one; the other gets `ErrJobNotClaimable` and moves on. Wasted one round trip, no correctness loss.
+**Duplicate pushes are safe.** If the sweeper pushes an ID that's already in Redis (e.g., a worker hasn't yet consumed it), two workers end up popping different ends of the queue and both try to claim. Postgres's `UPDATE … WHERE status='queued'` only succeeds for one; the other gets `ErrJobNotClaimable` and moves on. Wasted one round trip, no correctness loss.
 
 ### 5.4 `cmd/scheduler`
 
