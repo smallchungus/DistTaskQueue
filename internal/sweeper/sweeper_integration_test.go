@@ -164,3 +164,47 @@ func TestSweepOnce_LeavesFutureRetryInPostgresOnly(t *testing.T) {
 		t.Fatalf("queue depth changed: before=%d after=%d, want unchanged (future retry)", depthBefore, depthAfter)
 	}
 }
+
+func TestSweepOnce_ReclaimsProcessingOfDeadWorker(t *testing.T) {
+	_, q, sw := setup(t)
+	ctx := context.Background()
+
+	_ = q.Push(ctx, "test", "job-lost")
+	if _, err := q.BlockingPop(ctx, "test", "w-dead", time.Second); err != nil {
+		t.Fatal(err)
+	}
+
+	if err := sw.SweepOnce(ctx); err != nil {
+		t.Fatalf("sweep: %v", err)
+	}
+
+	got, err := q.BlockingPop(ctx, "test", "w-verify", time.Second)
+	if err != nil {
+		t.Fatalf("expected job back on queue: %v", err)
+	}
+	if got != "job-lost" {
+		t.Fatalf("got %q, want %q", got, "job-lost")
+	}
+}
+
+func TestSweepOnce_LeavesProcessingOfLiveWorker(t *testing.T) {
+	_, q, sw := setup(t)
+	ctx := context.Background()
+
+	if err := q.Heartbeat(ctx, "w-alive", 30*time.Second); err != nil {
+		t.Fatal(err)
+	}
+	_ = q.Push(ctx, "test", "job-inflight")
+	if _, err := q.BlockingPop(ctx, "test", "w-alive", time.Second); err != nil {
+		t.Fatal(err)
+	}
+
+	if err := sw.SweepOnce(ctx); err != nil {
+		t.Fatalf("sweep: %v", err)
+	}
+
+	depth, _ := q.Depth(ctx, "test")
+	if depth != 0 {
+		t.Fatalf("queue depth: %d, want 0 (job stays in processing)", depth)
+	}
+}

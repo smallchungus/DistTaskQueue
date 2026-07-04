@@ -48,6 +48,9 @@ func (s *Sweeper) Run(ctx context.Context) error {
 }
 
 func (s *Sweeper) SweepOnce(ctx context.Context) error {
+	if err := s.reclaimProcessing(ctx); err != nil {
+		return fmt.Errorf("reclaim processing: %w", err)
+	}
 	if err := s.reviveOrphans(ctx); err != nil {
 		return fmt.Errorf("revive orphans: %w", err)
 	}
@@ -56,6 +59,32 @@ func (s *Sweeper) SweepOnce(ctx context.Context) error {
 	}
 	if err := s.repushStale(ctx); err != nil {
 		return fmt.Errorf("repush stale: %w", err)
+	}
+	return nil
+}
+
+func (s *Sweeper) reclaimProcessing(ctx context.Context) error {
+	refs, err := s.cfg.Queue.ListProcessing(ctx)
+	if err != nil {
+		return err
+	}
+	for _, ref := range refs {
+		alive, err := s.cfg.Queue.IsWorkerAlive(ctx, ref.WorkerID)
+		if err != nil {
+			slog.Warn("heartbeat check failed", "worker_id", ref.WorkerID, "err", err)
+			continue
+		}
+		if alive {
+			continue
+		}
+		n, err := s.cfg.Queue.ReclaimProcessing(ctx, ref.Stage, ref.WorkerID)
+		if err != nil {
+			slog.Warn("reclaim failed", "worker_id", ref.WorkerID, "stage", ref.Stage, "err", err)
+			continue
+		}
+		if n > 0 {
+			slog.Info("reclaimed processing jobs", "worker_id", ref.WorkerID, "stage", ref.Stage, "count", n)
+		}
 	}
 	return nil
 }
