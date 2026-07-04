@@ -32,6 +32,13 @@ func New(cfg Config) *Worker {
 }
 
 func (w *Worker) Run(ctx context.Context) error {
+	if err := w.cfg.Queue.Heartbeat(ctx, w.cfg.WorkerID, w.cfg.HeartbeatTTL); err != nil {
+		slog.Warn("heartbeat write failed", "err", err)
+	}
+	hbCtx, hbCancel := context.WithCancel(ctx)
+	defer hbCancel()
+	go w.heartbeatLoop(hbCtx)
+
 	for {
 		select {
 		case <-ctx.Done():
@@ -53,6 +60,12 @@ func (w *Worker) ProcessOne(ctx context.Context) (didWork bool, err error) {
 		return false, fmt.Errorf("pop: %w", err)
 	}
 
+	defer func() {
+		if ackErr := w.cfg.Queue.Ack(context.WithoutCancel(ctx), w.cfg.Stage, w.cfg.WorkerID, rawID); ackErr != nil {
+			slog.Warn("ack failed", "job_id", rawID, "err", ackErr)
+		}
+	}()
+
 	jobID, err := uuid.Parse(rawID)
 	if err != nil {
 		return true, fmt.Errorf("parse job id %q: %w", rawID, err)
@@ -71,12 +84,7 @@ func (w *Worker) ProcessOne(ctx context.Context) (didWork bool, err error) {
 		return true, fmt.Errorf("get: %w", err)
 	}
 
-	hbCtx, hbCancel := context.WithCancel(ctx)
-	go w.heartbeatLoop(hbCtx)
-
 	nextStage, handlerErr := w.cfg.Handler.Process(ctx, job)
-
-	hbCancel()
 
 	if handlerErr != nil {
 		nextRun := time.Now().Add(Compute(job.Attempts + 1))

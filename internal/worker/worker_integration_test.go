@@ -169,3 +169,70 @@ func TestProcessOne_AdvancesToNextStage(t *testing.T) {
 		t.Fatalf("popped %q, want %q", popped, job.ID.String())
 	}
 }
+
+func TestProcessOne_AcksProcessingList(t *testing.T) {
+	h := setupHarness(t, worker.NoopHandler{})
+	ctx := context.Background()
+
+	job, _ := h.store.EnqueueJob(ctx, store.NewJob{Stage: "test"})
+	_ = h.queue.Push(ctx, "test", job.ID.String())
+
+	if _, err := h.w.ProcessOne(ctx); err != nil {
+		t.Fatalf("ProcessOne: %v", err)
+	}
+
+	n, err := h.queue.Client().LLen(ctx, "processing:test:worker-test-1").Result()
+	if err != nil {
+		t.Fatal(err)
+	}
+	if n != 0 {
+		t.Fatalf("processing depth: %d, want 0", n)
+	}
+}
+
+func TestProcessOne_AcksWhenClaimRaceLost(t *testing.T) {
+	h := setupHarness(t, worker.NoopHandler{})
+	ctx := context.Background()
+
+	job, _ := h.store.EnqueueJob(ctx, store.NewJob{Stage: "test"})
+	if err := h.store.ClaimJob(ctx, job.ID, "rival-worker"); err != nil {
+		t.Fatal(err)
+	}
+	_ = h.queue.Push(ctx, "test", job.ID.String())
+
+	didWork, err := h.w.ProcessOne(ctx)
+	if err != nil {
+		t.Fatalf("ProcessOne: %v", err)
+	}
+	if !didWork {
+		t.Fatal("expected didWork=true")
+	}
+	n, _ := h.queue.Client().LLen(ctx, "processing:test:worker-test-1").Result()
+	if n != 0 {
+		t.Fatalf("processing depth: %d, want 0", n)
+	}
+}
+
+func TestRun_HeartbeatsWhileIdle(t *testing.T) {
+	h := setupHarness(t, worker.NoopHandler{})
+	ctx, cancel := context.WithCancel(context.Background())
+	done := make(chan struct{})
+	go func() { _ = h.w.Run(ctx); close(done) }()
+
+	deadline := time.Now().Add(2 * time.Second)
+	for {
+		alive, err := h.queue.IsWorkerAlive(context.Background(), "worker-test-1")
+		if err != nil {
+			t.Fatal(err)
+		}
+		if alive {
+			break
+		}
+		if time.Now().After(deadline) {
+			t.Fatal("no heartbeat within 2s of Run starting")
+		}
+		time.Sleep(50 * time.Millisecond)
+	}
+	cancel()
+	<-done
+}
