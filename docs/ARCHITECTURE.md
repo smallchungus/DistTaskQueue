@@ -348,11 +348,11 @@ The scheduler uses Gmail's `historyId` cursor, which shouldn't re-emit the same 
 
 ### 5.7 `internal/queue` — Redis layer
 
-**What:** `LPush`, `BRPop`, `LLen`, plus `Heartbeat` (SET with TTL) and `IsWorkerAlive` (EXISTS). One list per stage, key format `queue:<stage>`.
+**What:** `Push` (LPUSH), `BlockingPop` (BLMOVE into a per-worker processing list), `Ack` (LREM), `Depth` (LLEN), `Heartbeat` (SET with TTL), `IsWorkerAlive` (EXISTS), plus the sweeper's `ListProcessing` (SCAN `processing:*`) and `ReclaimProcessing` (LMOVE back to the queue). One list per stage, key format `queue:<stage>`; one processing list per worker, `processing:<stage>:<worker_id>`.
 
-**Why BRPOP instead of LPOP:**
+**Why BLMOVE instead of LPOP:**
 
-BLPOP/BRPOP blocks on empty queues. Workers can idle waiting for a job without a busy-poll loop. Combined with `LPUSH` we get FIFO ordering — the oldest job comes out first, which matches user expectation (first in, first out).
+BLMOVE blocks on empty queues. Workers can idle waiting for a job without a busy-poll loop. Combined with `LPUSH` we get FIFO ordering — the oldest job comes out first, which matches user expectation (first in, first out). And unlike a plain BLPOP, the popped ID isn't gone the moment it leaves the queue — it sits in the worker's processing list until acked, so a crash between pop and claim loses nothing.
 
 **Why not Redis streams:**
 
@@ -360,7 +360,7 @@ Covered above. Lists are a simpler primitive; streams would carry durability sem
 
 **Lua scripts (currently none):**
 
-Not used yet. A prospective use is a fused "pop-and-heartbeat" script that atomically pops a job ID from the queue and writes the first heartbeat, closing an even tighter race than the stale-queued sweeper already handles. Considered, decided the sweeper's recovery path is sufficient for now.
+Not used yet. A prospective use was a fused "pop-and-heartbeat" script that atomically popped a job ID and wrote a first heartbeat, shrinking the pop-to-claim window. BLMOVE made it moot — the popped ID already survives in the processing list until acked, and heartbeats now run for the whole process lifetime.
 
 ### 5.8 `internal/worker` — framework code
 
@@ -485,11 +485,12 @@ What the system promises, and how.
 
 **Promise:** Every Gmail message enqueued will eventually produce at least one successful Drive upload, as long as infrastructure stays reachable.
 
-**How:** Three independent recovery paths:
+**How:** Four independent recovery paths:
 
-1. Worker crash during handler → heartbeat TTL expires → sweeper re-queues (§5.3 pass 1).
-2. Handler returns error → `MarkFailed` with `next_run_at = now + backoff`; sweeper promotes when backoff elapses (§5.3 pass 2).
-3. Worker crash between `BLPOP` and `ClaimJob` → sweeper re-pushes after `STALE_QUEUED_THRESHOLD_SEC` (§5.3 pass 3).
+1. Worker crash during handler → heartbeat TTL expires → sweeper re-queues (§5.3 pass 2).
+2. Handler returns error → `MarkFailed` with `next_run_at = now + backoff`; sweeper promotes when backoff elapses (§5.3 pass 3).
+3. Worker crash between `BLMOVE` and `ClaimJob` → the ID survives in the worker's processing list; sweeper moves it back to the stage queue (§5.3 pass 1). The pop itself can no longer lose a job.
+4. Redis push lost outright → sweeper re-pushes the stale queued row after `STALE_QUEUED_THRESHOLD_SEC` (§5.3 pass 4).
 
 **What breaks it:** Permanently losing both Postgres and Redis state simultaneously — the scheduler would re-poll Gmail with a lost cursor and re-enqueue from the current `historyId` forward, so strictly older emails in-flight at the moment of loss would be skipped. In practice both need durable volumes.
 
@@ -530,7 +531,7 @@ Each stage can scale independently by replica count. The key insight: all worker
 Expected bottleneck order (assuming real Google APIs aren't throttling):
 
 1. Gotenberg CPU for `render` (each render is single-threaded Chromium).
-2. Redis RTT for `BLPOP` on deep queues (microseconds per op, thousands per second achievable).
+2. Redis RTT for `BLMOVE` on deep queues (microseconds per op, thousands per second achievable).
 3. Postgres claim contention (hundreds per second on a single writer; horizontal Postgres needs read replicas + logical sharding, out of scope).
 
 The loadtest (`make loadtest`) hit ~2,400 jobs/sec on a laptop with 4 in-process workers — limited by Postgres round-trips, not any particular layer's throughput.
