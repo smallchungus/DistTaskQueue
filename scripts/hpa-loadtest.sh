@@ -15,10 +15,10 @@ while :; do
   elapsed=$(( now - start ))
   [ "$elapsed" -ge "$DURATION" ] && break
 
-  metrics=$(curl -fsS "$API_URL/metrics")
-  depth=$(grep -F 'dtq_queue_depth{stage="test"}' <<< "$metrics" | awk '{print $2}')
-  running=$(grep -F 'dtq_job_count{status="running"}' <<< "$metrics" | awk '{print $2}')
-  replicas=$(kubectl -n "$NS" get deploy worker-test -o jsonpath='{.status.readyReplicas}')
+  metrics=$(curl -fsS "$API_URL/metrics" || true)
+  depth=$(grep -F 'dtq_queue_depth{stage="test"}' <<< "$metrics" | awk '{print $2}' || true)
+  running=$(grep -F 'dtq_job_count{status="running"}' <<< "$metrics" | awk '{print $2}' || true)
+  replicas=$(kubectl -n "$NS" get deploy worker-test -o jsonpath='{.status.readyReplicas}' || true)
   echo "$elapsed,${depth:-0},${replicas:-0},${running:-0}" >> "$OUT"
 
   if [ "$fired" -eq 0 ] && [ "$elapsed" -ge 20 ]; then
