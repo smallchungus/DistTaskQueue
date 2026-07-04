@@ -141,3 +141,61 @@ func TestPollOnce_InitializesSyncStateFromProfile(t *testing.T) {
 		t.Fatalf("expected no jobs on init, got %d", depth)
 	}
 }
+
+func TestPollOnce_TouchesSyncStateWhenQuiet(t *testing.T) {
+	histResp, _ := json.Marshal(map[string]any{"historyId": "1"})
+	gmailMock := httptest.NewServer(http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
+		w.Header().Set("Content-Type", "application/json")
+		if r.URL.Path == "/gmail/v1/users/me/history" {
+			_, _ = w.Write(histResp)
+			return
+		}
+		http.NotFound(w, r)
+	}))
+	defer gmailMock.Close()
+
+	pool := testutil.StartPostgres(t)
+	if err := store.Migrate(context.Background(), pool.Config().ConnString()); err != nil {
+		t.Fatal(err)
+	}
+	s := store.New(pool)
+	q := queue.New(testutil.StartRedis(t))
+
+	u, _ := s.CreateUser(context.Background(), fmt.Sprintf("quiet+%d@example.com", time.Now().UnixNano()))
+	key := newKey32()
+	tok := &oauth2.Token{AccessToken: "x", RefreshToken: "y", Expiry: time.Now().Add(time.Hour)}
+	if err := oauth.SaveToken(context.Background(), s, u.ID, key, "google", tok); err != nil {
+		t.Fatal(err)
+	}
+	if err := s.SetGmailSyncState(context.Background(), u.ID, "1"); err != nil {
+		t.Fatal(err)
+	}
+
+	var before time.Time
+	if err := pool.QueryRow(context.Background(),
+		`SELECT updated_at FROM gmail_sync_state WHERE user_id = $1`, u.ID).Scan(&before); err != nil {
+		t.Fatal(err)
+	}
+
+	sch := scheduler.New(scheduler.Config{
+		Store:         s,
+		Queue:         q,
+		EncryptionKey: key,
+		OAuth2:        &oauth2.Config{ClientID: "x", ClientSecret: "y"},
+		GmailEndpoint: gmailMock.URL,
+	})
+
+	time.Sleep(50 * time.Millisecond)
+	if err := sch.PollOnce(context.Background()); err != nil {
+		t.Fatalf("poll: %v", err)
+	}
+
+	var after time.Time
+	if err := pool.QueryRow(context.Background(),
+		`SELECT updated_at FROM gmail_sync_state WHERE user_id = $1`, u.ID).Scan(&after); err != nil {
+		t.Fatal(err)
+	}
+	if !after.After(before) {
+		t.Fatalf("updated_at did not advance on quiet poll: before=%v after=%v", before, after)
+	}
+}

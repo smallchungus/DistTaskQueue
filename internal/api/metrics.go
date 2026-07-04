@@ -27,6 +27,7 @@ type metricsCollector struct {
 	queueDepth   *prometheus.GaugeVec
 	jobCount     *prometheus.GaugeVec
 	aliveWorkers prometheus.Gauge
+	lastPoll     prometheus.Gauge
 	scrapeErrors prometheus.Counter
 
 	mu      sync.Mutex
@@ -56,6 +57,10 @@ func newMetricsCollector(s *store.Store, q *queue.Queue, r *goredis.Client) *met
 			Name: "dtq_alive_workers",
 			Help: "Count of worker heartbeat keys currently in Redis.",
 		}),
+		lastPoll: prometheus.NewGauge(prometheus.GaugeOpts{
+			Name: "dtq_last_poll_success_timestamp_seconds",
+			Help: "Unix time of the most recent successful Gmail poll across users; 0 when no user has synced.",
+		}),
 		scrapeErrors: prometheus.NewCounter(prometheus.CounterOpts{
 			Name: "dtq_metrics_scrape_errors_total",
 			Help: "Errors encountered while refreshing DistTaskQueue metrics.",
@@ -64,7 +69,7 @@ func newMetricsCollector(s *store.Store, q *queue.Queue, r *goredis.Client) *met
 }
 
 func (m *metricsCollector) register(reg prometheus.Registerer) {
-	reg.MustRegister(m.queueDepth, m.jobCount, m.aliveWorkers, m.scrapeErrors)
+	reg.MustRegister(m.queueDepth, m.jobCount, m.aliveWorkers, m.lastPoll, m.scrapeErrors)
 }
 
 // start begins the refresh loop. Safe to call once; subsequent calls are noops.
@@ -123,6 +128,15 @@ func (m *metricsCollector) refresh(ctx context.Context) {
 			}
 		}
 		rows.Close()
+	}
+
+	var lastPoll float64
+	if err := m.store.PoolForTest().QueryRow(ctx,
+		`SELECT coalesce(extract(epoch from max(updated_at)), 0) FROM gmail_sync_state`).Scan(&lastPoll); err != nil {
+		m.scrapeErrors.Inc()
+		slog.Warn("metrics poll freshness", "err", err)
+	} else {
+		m.lastPoll.Set(lastPoll)
 	}
 
 	alive := 0

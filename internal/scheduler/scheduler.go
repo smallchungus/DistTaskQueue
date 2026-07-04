@@ -125,10 +125,9 @@ func (s *Scheduler) pollUser(ctx context.Context, u store.User) error {
 		slog.Info("enqueued fetch", "job_id", job.ID, "msg_id", gid)
 	}
 
-	if newCursor != cursor {
-		if err := s.cfg.Store.SetGmailSyncState(ctx, u.ID, newCursor); err != nil {
-			return fmt.Errorf("save cursor: %w", err)
-		}
+	// Unconditional so updated_at doubles as the poll-freshness signal.
+	if err := s.cfg.Store.SetGmailSyncState(ctx, u.ID, newCursor); err != nil {
+		return fmt.Errorf("save cursor: %w", err)
 	}
 	return nil
 }
