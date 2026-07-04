@@ -58,3 +58,7 @@ appendonly.aof
 
 # Brainstorming companion
 .superpowers/
+
+# local tool indexes and settings
+.claude/
+.codegraph/
