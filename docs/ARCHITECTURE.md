@@ -251,7 +251,7 @@ for {
 }
 ```
 
-**Graceful shutdown.** `ctx` in the outer loop is `signal.NotifyContext(ctx, SIGINT, SIGTERM)`. When Kubernetes sends SIGTERM (30 s before SIGKILL), the outer context cancels. In-flight handlers receive the cancel and can abort cleanly; BLMOVE returns quickly because its own timeout is bounded by the context. The worker finishes the current job (at most PopTimeout + handler duration), then exits. Pods roll without job loss.
+**Graceful shutdown.** `ctx` in the outer loop is `signal.NotifyContext(ctx, SIGINT, SIGTERM)`. When Kubernetes sends SIGTERM (30 s before SIGKILL), the outer context cancels. In-flight handlers receive the cancel and abort; BLMOVE returns quickly because its own timeout is bounded by the context. The aborted job is marked failed, or recovered by orphan revival once its heartbeat expires, and retries on a fresh pod — at-least-once redelivery, not zero interruption. Separately, if a post-claim status write (GetJob/MarkFailed/AdvanceJob/MarkDone) fails, the worker exits so its heartbeat expires and the sweeper recovers the job.
 
 **Handler interface:**
 
