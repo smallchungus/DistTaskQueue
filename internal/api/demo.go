@@ -101,7 +101,7 @@ func (d *demoRoutes) flood(w http.ResponseWriter, r *http.Request) {
 		writeJSONErr(w, http.StatusTooManyRequests, "flood already fired in last 60s — cooldown in effect")
 		return
 	}
-	count := d.enqueueSynthetic(r.Context(), d.cfg.FloodSize, `{"sleepMs":10}`)
+	count := d.enqueueSynthetic(r.Context(), d.cfg.FloodSize, `{"sleepMs":250}`)
 	writeJSON(w, http.StatusOK, map[string]any{"enqueued": count})
 }
 
