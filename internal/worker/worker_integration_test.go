@@ -286,3 +286,78 @@ func TestRun_HeartbeatsDuringSlowJob(t *testing.T) {
 	cancel()
 	<-done
 }
+
+func TestRun_ExitsWhenSettleFails(t *testing.T) {
+	h := setupHarness(t, worker.NoopHandler{})
+	ctx := context.Background()
+
+	job, err := h.store.EnqueueJob(ctx, store.NewJob{Stage: "test", Payload: json.RawMessage(`{"sleepMs":1000}`)})
+	if err != nil {
+		t.Fatal(err)
+	}
+	if err := h.queue.Push(ctx, "test", job.ID.String()); err != nil {
+		t.Fatal(err)
+	}
+
+	errCh := make(chan error, 1)
+	go func() { errCh <- h.w.Run(ctx) }()
+
+	deadline := time.Now().Add(3 * time.Second)
+	for {
+		got, err := h.store.GetJob(ctx, job.ID)
+		if err != nil {
+			t.Fatal(err)
+		}
+		if got.Status == store.StatusRunning {
+			break
+		}
+		if time.Now().After(deadline) {
+			t.Fatal("job never started running")
+		}
+		time.Sleep(50 * time.Millisecond)
+	}
+	if _, err := h.store.PoolForTest().Exec(ctx, `DELETE FROM pipeline_jobs WHERE id = $1`, job.ID); err != nil {
+		t.Fatal(err)
+	}
+
+	select {
+	case err := <-errCh:
+		if err == nil {
+			t.Fatal("Run returned nil, want settle error")
+		}
+	case <-time.After(5 * time.Second):
+		t.Fatal("Run did not exit after settle failure")
+	}
+}
+
+func TestProcessOne_AcksOnHandlerError(t *testing.T) {
+	h := setupHarness(t, errHandler{})
+	ctx := context.Background()
+
+	job, _ := h.store.EnqueueJob(ctx, store.NewJob{Stage: "test"})
+	_ = h.queue.Push(ctx, "test", job.ID.String())
+
+	if _, err := h.w.ProcessOne(ctx); err != nil {
+		t.Fatalf("ProcessOne: %v", err)
+	}
+	n, _ := h.queue.Client().LLen(ctx, "processing:test:worker-test-1").Result()
+	if n != 0 {
+		t.Fatalf("processing depth: %d, want 0", n)
+	}
+}
+
+func TestProcessOne_AcksOnAdvance(t *testing.T) {
+	h := setupHarnessWithStage(t, advancingHandler{next: "render"}, "fetch")
+	ctx := context.Background()
+
+	job, _ := h.store.EnqueueJob(ctx, store.NewJob{Stage: "fetch"})
+	_ = h.queue.Push(ctx, "fetch", job.ID.String())
+
+	if _, err := h.w.ProcessOne(ctx); err != nil {
+		t.Fatalf("ProcessOne: %v", err)
+	}
+	n, _ := h.queue.Client().LLen(ctx, "processing:fetch:worker-test-1").Result()
+	if n != 0 {
+		t.Fatalf("processing depth: %d, want 0", n)
+	}
+}

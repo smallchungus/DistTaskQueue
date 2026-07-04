@@ -12,6 +12,8 @@ import (
 	"github.com/smallchungus/disttaskqueue/internal/store"
 )
 
+var errPostClaim = errors.New("post-claim settle failed")
+
 type Config struct {
 	Stage             string
 	WorkerID          string
@@ -46,6 +48,12 @@ func (w *Worker) Run(ctx context.Context) error {
 		default:
 		}
 		if _, err := w.ProcessOne(ctx); err != nil {
+			if ctx.Err() != nil {
+				return nil
+			}
+			if errors.Is(err, errPostClaim) {
+				return err
+			}
 			slog.Error("worker process failed", "err", err, "stage", w.cfg.Stage, "worker_id", w.cfg.WorkerID)
 		}
 	}
@@ -81,7 +89,7 @@ func (w *Worker) ProcessOne(ctx context.Context) (didWork bool, err error) {
 
 	job, err := w.cfg.Store.GetJob(ctx, jobID)
 	if err != nil {
-		return true, fmt.Errorf("get: %w", err)
+		return true, fmt.Errorf("get: %w: %w", err, errPostClaim)
 	}
 
 	nextStage, handlerErr := w.cfg.Handler.Process(ctx, job)
@@ -89,7 +97,7 @@ func (w *Worker) ProcessOne(ctx context.Context) (didWork bool, err error) {
 	if handlerErr != nil {
 		nextRun := time.Now().Add(Compute(job.Attempts + 1))
 		if err := w.cfg.Store.MarkFailed(ctx, jobID, handlerErr.Error(), nextRun); err != nil {
-			return true, fmt.Errorf("mark failed: %w", err)
+			return true, fmt.Errorf("mark failed: %w: %w", err, errPostClaim)
 		}
 		slog.Info("job failed, will retry", "job_id", jobID, "attempts", job.Attempts+1, "next_run", nextRun)
 		return true, nil
@@ -97,7 +105,7 @@ func (w *Worker) ProcessOne(ctx context.Context) (didWork bool, err error) {
 
 	if nextStage != "" {
 		if err := w.cfg.Store.AdvanceJob(ctx, jobID, nextStage); err != nil {
-			return true, fmt.Errorf("advance: %w", err)
+			return true, fmt.Errorf("advance: %w: %w", err, errPostClaim)
 		}
 		if err := w.cfg.Queue.Push(ctx, nextStage, jobID.String()); err != nil {
 			return true, fmt.Errorf("push next stage: %w", err)
@@ -107,7 +115,7 @@ func (w *Worker) ProcessOne(ctx context.Context) (didWork bool, err error) {
 	}
 
 	if err := w.cfg.Store.MarkDone(ctx, jobID); err != nil {
-		return true, fmt.Errorf("mark done: %w", err)
+		return true, fmt.Errorf("mark done: %w: %w", err, errPostClaim)
 	}
 	return true, nil
 }
