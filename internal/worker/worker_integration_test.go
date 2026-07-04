@@ -236,3 +236,53 @@ func TestRun_HeartbeatsWhileIdle(t *testing.T) {
 	cancel()
 	<-done
 }
+
+func TestRun_HeartbeatsDuringSlowJob(t *testing.T) {
+	h := setupHarness(t, worker.NoopHandler{})
+	ctx, cancel := context.WithCancel(context.Background())
+
+	job, err := h.store.EnqueueJob(ctx, store.NewJob{Stage: "test", Payload: json.RawMessage(`{"sleepMs":2500}`)})
+	if err != nil {
+		t.Fatal(err)
+	}
+	if err := h.queue.Push(ctx, "test", job.ID.String()); err != nil {
+		t.Fatal(err)
+	}
+
+	done := make(chan struct{})
+	go func() { _ = h.w.Run(ctx); close(done) }()
+
+	deadline := time.Now().Add(3 * time.Second)
+	for {
+		got, err := h.store.GetJob(ctx, job.ID)
+		if err != nil {
+			t.Fatal(err)
+		}
+		if got.Status == store.StatusRunning {
+			break
+		}
+		if time.Now().After(deadline) {
+			t.Fatal("job never started running")
+		}
+		time.Sleep(50 * time.Millisecond)
+	}
+
+	time.Sleep(1500 * time.Millisecond)
+	got, err := h.store.GetJob(ctx, job.ID)
+	if err != nil {
+		t.Fatal(err)
+	}
+	if got.Status != store.StatusRunning {
+		t.Fatalf("status: %s, want running (job should still be mid-handler)", got.Status)
+	}
+	alive, err := h.queue.IsWorkerAlive(ctx, "worker-test-1")
+	if err != nil {
+		t.Fatal(err)
+	}
+	if !alive {
+		t.Fatal("heartbeat expired during slow job")
+	}
+
+	cancel()
+	<-done
+}
