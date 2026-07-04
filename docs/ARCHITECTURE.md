@@ -60,7 +60,7 @@ Alternative rejected: Redis streams with consumer groups. Streams give you durab
 
 When a worker dies mid-job, we need to detect it and requeue. Two options:
 
-- **Heartbeat**: worker writes `SET heartbeat:<worker_id> now() EX 15s` every 5 s while processing. TTL > 2× interval so a single missed write doesn't expire. A separate sweeper polls for jobs with `status='running'` and asks Redis `EXISTS heartbeat:<worker_id>`; if missing, requeue.
+- **Heartbeat**: worker writes `SET heartbeat:<worker_id> now() EX 15s` every 5 s for its whole process lifetime. TTL > 2× interval so a single missed write doesn't expire. A separate sweeper polls for jobs with `status='running'` and asks Redis `EXISTS heartbeat:<worker_id>`; if missing, requeue.
 - **Key expiry notifications**: Redis can push events when keys expire, via `notify-keyspace-events`. We'd set a "job-in-flight" key with a TTL, and a listener would react to the expiry event by requeuing.
 
 Key expiry notifications are elegant but Redis docs are explicit: *they are not guaranteed delivery*. If the subscriber is disconnected at the moment the expiry fires, the event is lost. You'd need a periodic catch-up scan anyway. So you end up building both paths.
