@@ -1,0 +1,34 @@
+# Helm values for grafana/alloy (namespace: monitoring).
+# Install: helm install alloy grafana/alloy -n monitoring -f deploy/k8s/alloy-values.yaml
+# Requires Secret monitoring/grafana-cloud with key `token` (metrics-write API token).
+alloy:
+  extraEnv:
+    - name: GCLOUD_RW_TOKEN
+      valueFrom:
+        secretKeyRef:
+          name: grafana-cloud
+          key: token
+  resources:
+    requests: { cpu: 50m, memory: 128Mi }
+    limits: { memory: 256Mi }
+  configMap:
+    content: |
+      prometheus.scrape "dtq" {
+        targets = [{
+          "__address__" = "api.disttaskqueue.svc.cluster.local:80",
+          "job"         = "dtq-api",
+        }]
+        metrics_path    = "/metrics"
+        scrape_interval = "60s"
+        forward_to      = [prometheus.remote_write.grafanacloud.receiver]
+      }
+
+      prometheus.remote_write "grafanacloud" {
+        endpoint {
+          url = "https://prometheus-prod-66-prod-us-east-3.grafana.net/api/prom/push"
+          basic_auth {
+            username = "3350808"
+            password = sys.env("GCLOUD_RW_TOKEN")
+          }
+        }
+      }

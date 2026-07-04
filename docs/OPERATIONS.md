@@ -524,3 +524,32 @@ If kubectl suddenly times out on 6443, the home IP changed. Fix:
 
 Note: for IPv6 sources use the delegated /64 prefix, not the host /128 —
 home IPv6 privacy addresses rotate daily.
+
+---
+
+## 16. Runbook — metrics shipping + alerts (Grafana Cloud)
+
+Grafana Alloy (helm chart `grafana/alloy`, namespace `monitoring`) scrapes
+the api pod's /metrics every 60 s and remote-writes to Grafana Cloud's
+hosted Prometheus. Config: `deploy/k8s/alloy-values.yaml`. Credentials:
+Secret `monitoring/grafana-cloud`, key `token` (metrics-write scope only —
+it cannot query or manage the account).
+
+Install / update:
+
+    helm upgrade --install alloy grafana/alloy -n monitoring \
+      --create-namespace -f deploy/k8s/alloy-values.yaml
+
+Health: `kubectl -n monitoring logs -l app.kubernetes.io/name=alloy` —
+remote-write auth failures show as repeating `level=error` lines.
+
+Alert rules live in the Grafana Cloud UI (Alerting → Alert rules), not in
+the repo:
+
+1. "Gmail sync stale": `time() - max(dtq_last_poll_success_timestamp_seconds) > 1800`,
+   pending 5 m. Fires when no successful poll for 30 min — the dead-token
+   detector (WAR-STORIES #1).
+2. "Dead jobs": `sum(dtq_job_count{status="dead"}) > 0`, pending 10 m.
+
+Token rotation: mint a new metrics-write token in the Cloud portal
+(Prometheus tile → Details), update the Secret, restart the alloy pod.
