@@ -82,6 +82,32 @@ in your Drive, under a dated folder tree:
 If it doesn't, `docker compose logs -f scheduler worker-fetch worker-render
 worker-upload` is the first place to look.
 
+## 6. Back up your existing inbox
+
+The scheduler only forward-syncs new mail — it never backfills on its own,
+so day one only picks up whatever arrives after you connect the account.
+To pull in everything already in the inbox, run the one-shot backfill
+command:
+
+```bash
+docker compose run backfill --email=you@example.com --since=2020-01-01
+```
+
+`--since` and `--before` take `YYYY-MM-DD` dates and are both optional;
+omit `--since` to go back to the start of the mailbox. It pages through
+`messages.list`, enqueues a `fetch` job per message with the same
+idempotency check the scheduler uses, and pauses whenever `queue:fetch`
+gets more than 500 jobs deep (`--max-queue` to change the cap) so it can't
+outrun the workers.
+
+Expect roughly 1-2 emails/second per render worker — Gotenberg's Chromium
+render is the bottleneck here, not the Gmail API. To go faster, scale the
+render worker: `docker compose up -d --scale worker-render=3` (on k3s, use
+the KEDA HPA described in OPERATIONS.md).
+
+Safe to interrupt with Ctrl+C and re-run — already-enqueued messages are
+skipped on the next pass.
+
 ## Troubleshooting
 
 | Symptom | Cause | Fix |

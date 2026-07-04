@@ -172,6 +172,25 @@ services:
     depends_on:
       postgres: { condition: service_healthy }
 
+  backfill:
+    image: ghcr.io/smallchungus/disttaskqueue-api:latest
+    # build:
+    #   context: .
+    #   args:
+    #     VERSION: dev
+    #     COMMIT: local
+    profiles: ["backfill"]
+    entrypoint: ["/backfill"]
+    env_file:
+      - path: .env
+        required: false
+    environment:
+      DATABASE_URL: "postgres://dtq:dtq@postgres:5432/dtq?sslmode=disable"
+      REDIS_URL: "redis://redis:6379/0"
+    depends_on:
+      postgres: { condition: service_healthy }
+      redis: { condition: service_healthy }
+
 volumes:
   pg-data:
   redis-data:
