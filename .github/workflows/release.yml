@@ -29,7 +29,6 @@ jobs:
           push: true
           tags: |
             ghcr.io/smallchungus/disttaskqueue-api:${{ github.ref_name }}
-            ghcr.io/smallchungus/disttaskqueue-api:latest
           build-args: |
             VERSION=${{ github.ref_name }}
             COMMIT=${{ github.sha }}
