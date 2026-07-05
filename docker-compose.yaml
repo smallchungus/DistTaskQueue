@@ -1,3 +1,5 @@
+# Published-image stack. To build from source instead:
+#   docker compose -f docker-compose.yaml -f docker-compose.build.yaml up --build
 services:
   postgres:
     image: postgres:16-alpine
@@ -34,11 +36,6 @@ services:
 
   api:
     image: ghcr.io/smallchungus/disttaskqueue-api:latest
-    # build:
-    #   context: .
-    #   args:
-    #     VERSION: dev
-    #     COMMIT: local
     env_file:
       - path: .env
         required: false
@@ -54,11 +51,6 @@ services:
 
   worker-fetch:
     image: ghcr.io/smallchungus/disttaskqueue-api:latest
-    # build:
-    #   context: .
-    #   args:
-    #     VERSION: dev
-    #     COMMIT: local
     entrypoint: ["/worker"]
     command: ["--stage=fetch"]
     env_file:
@@ -75,11 +67,6 @@ services:
 
   worker-render:
     image: ghcr.io/smallchungus/disttaskqueue-api:latest
-    # build:
-    #   context: .
-    #   args:
-    #     VERSION: dev
-    #     COMMIT: local
     entrypoint: ["/worker"]
     command: ["--stage=render"]
     env_file:
@@ -99,11 +86,6 @@ services:
 
   worker-upload:
     image: ghcr.io/smallchungus/disttaskqueue-api:latest
-    # build:
-    #   context: .
-    #   args:
-    #     VERSION: dev
-    #     COMMIT: local
     entrypoint: ["/worker"]
     command: ["--stage=upload"]
     env_file:
@@ -120,11 +102,6 @@ services:
 
   scheduler:
     image: ghcr.io/smallchungus/disttaskqueue-api:latest
-    # build:
-    #   context: .
-    #   args:
-    #     VERSION: dev
-    #     COMMIT: local
     entrypoint: ["/scheduler"]
     env_file:
       - path: .env
@@ -138,11 +115,6 @@ services:
 
   sweeper:
     image: ghcr.io/smallchungus/disttaskqueue-api:latest
-    # build:
-    #   context: .
-    #   args:
-    #     VERSION: dev
-    #     COMMIT: local
     entrypoint: ["/sweeper"]
     env_file:
       - path: .env
@@ -156,11 +128,6 @@ services:
 
   oauth-setup:
     image: ghcr.io/smallchungus/disttaskqueue-api:latest
-    # build:
-    #   context: .
-    #   args:
-    #     VERSION: dev
-    #     COMMIT: local
     profiles: ["setup"]
     entrypoint: ["/oauth-setup"]
     env_file:
@@ -175,11 +142,6 @@ services:
 
   backfill:
     image: ghcr.io/smallchungus/disttaskqueue-api:latest
-    # build:
-    #   context: .
-    #   args:
-    #     VERSION: dev
-    #     COMMIT: local
     profiles: ["backfill"]
     entrypoint: ["/backfill"]
     env_file:
