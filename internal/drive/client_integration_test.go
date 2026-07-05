@@ -3,12 +3,16 @@
 package drive_test
 
 import (
+	"bytes"
 	"context"
 	"encoding/json"
 	"fmt"
 	"io"
+	"mime"
+	"mime/multipart"
 	"net/http"
 	"net/http/httptest"
+	"regexp"
 	"strings"
 	"testing"
 	"time"
@@ -21,6 +25,12 @@ import (
 	"github.com/smallchungus/disttaskqueue/internal/testutil"
 )
 
+type mockFile struct {
+	id       string
+	name     string
+	parentID string
+}
+
 type driveMock struct {
 	listResp   string
 	createResp string
@@ -29,6 +39,40 @@ type driveMock struct {
 	createHits int
 	uploadHits int
 	lastUpload []byte
+	files      []mockFile
+}
+
+var filesQueryRe = regexp.MustCompile(`name = '(.*)' and '([^']*)' in parents`)
+
+func parseFilesQuery(q string) (name, parentID string) {
+	match := filesQueryRe.FindStringSubmatch(q)
+	if match == nil {
+		return "", ""
+	}
+	return match[1], match[2]
+}
+
+func parseUploadMetadata(t *testing.T, r *http.Request, body []byte) (name, parentID string) {
+	t.Helper()
+	_, params, err := mime.ParseMediaType(r.Header.Get("Content-Type"))
+	if err != nil {
+		t.Fatalf("parse upload content type: %v", err)
+	}
+	part, err := multipart.NewReader(bytes.NewReader(body), params["boundary"]).NextPart()
+	if err != nil {
+		t.Fatalf("read upload metadata part: %v", err)
+	}
+	var meta struct {
+		Name    string   `json:"name"`
+		Parents []string `json:"parents"`
+	}
+	if err := json.NewDecoder(part).Decode(&meta); err != nil {
+		t.Fatalf("decode upload metadata: %v", err)
+	}
+	if len(meta.Parents) > 0 {
+		parentID = meta.Parents[0]
+	}
+	return meta.Name, parentID
 }
 
 func (m *driveMock) server(t *testing.T) *httptest.Server {
@@ -39,7 +83,20 @@ func (m *driveMock) server(t *testing.T) *httptest.Server {
 		case http.MethodGet:
 			m.listHits++
 			w.Header().Set("Content-Type", "application/json")
-			_, _ = w.Write([]byte(m.listResp))
+			if m.listResp != "" {
+				_, _ = w.Write([]byte(m.listResp))
+				return
+			}
+			name, parentID := parseFilesQuery(r.URL.Query().Get("q"))
+			matches := make([]map[string]any, 0)
+			for _, f := range m.files {
+				if f.name == name && f.parentID == parentID {
+					matches = append(matches, map[string]any{"id": f.id, "name": f.name})
+					break
+				}
+			}
+			resp, _ := json.Marshal(map[string]any{"files": matches})
+			_, _ = w.Write(resp)
 		case http.MethodPost:
 			m.createHits++
 			w.Header().Set("Content-Type", "application/json")
@@ -50,8 +107,22 @@ func (m *driveMock) server(t *testing.T) *httptest.Server {
 		m.uploadHits++
 		body, _ := io.ReadAll(r.Body)
 		m.lastUpload = body
+		name, parentID := parseUploadMetadata(t, r, body)
+
 		w.Header().Set("Content-Type", "application/json")
-		_, _ = w.Write([]byte(m.uploadResp))
+		if m.uploadResp != "" {
+			_, _ = w.Write([]byte(m.uploadResp))
+			var created struct {
+				ID string `json:"id"`
+			}
+			_ = json.Unmarshal([]byte(m.uploadResp), &created)
+			m.files = append(m.files, mockFile{id: created.ID, name: name, parentID: parentID})
+			return
+		}
+
+		id := fmt.Sprintf("uploaded-%d", m.uploadHits)
+		_, _ = w.Write([]byte(fmt.Sprintf(`{"id":%q}`, id)))
+		m.files = append(m.files, mockFile{id: id, name: name, parentID: parentID})
 	})
 	srv := httptest.NewServer(mux)
 	t.Cleanup(srv.Close)
@@ -139,5 +210,26 @@ func TestUpload_PostsContent(t *testing.T) {
 	}
 	if !strings.Contains(string(m.lastUpload), "PDF-DATA") {
 		t.Fatalf("upload body did not contain PDF-DATA")
+	}
+}
+
+func TestUpload_SameNameSameParentIsIdempotent(t *testing.T) {
+	m := &driveMock{}
+	c := setupClient(t, m)
+
+	id1, err := c.Upload(context.Background(), "parent-id", "report.pdf", "application/pdf", []byte("PDF-DATA"))
+	if err != nil {
+		t.Fatalf("first upload: %v", err)
+	}
+	id2, err := c.Upload(context.Background(), "parent-id", "report.pdf", "application/pdf", []byte("PDF-DATA"))
+	if err != nil {
+		t.Fatalf("second upload: %v", err)
+	}
+
+	if id1 != id2 {
+		t.Fatalf("got ids %q and %q, want same id for a repeated upload", id1, id2)
+	}
+	if m.uploadHits != 1 {
+		t.Fatalf("got %d create calls, want 1", m.uploadHits)
 	}
 }

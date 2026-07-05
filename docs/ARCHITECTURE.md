@@ -400,7 +400,7 @@ Gmail's history log distinguishes between "an email was added to the INBOX label
 
 ### 5.11 `internal/drive` — Drive client + folder cache
 
-**What:** `New(ctx, cfg)` builds an authenticated `*drive.Service`. `EnsureFolder(parent, name)` is list-or-create. `Upload(parent, name, type, bytes)` is a simple multipart create. `FolderCache` wraps Redis for folder-ID memoization.
+**What:** `New(ctx, cfg)` builds an authenticated `*drive.Service`. `EnsureFolder(parent, name)` is list-or-create. `Upload(parent, name, type, bytes)` is also list-or-create — same query shape as `EnsureFolder`, so a retried upload returns the existing file's ID instead of creating a duplicate. `FolderCache` wraps Redis for folder-ID memoization.
 
 **Why the folder cache matters:**
 
@@ -500,9 +500,11 @@ What the system promises, and how.
 
 **How:**
 
-- `processed_emails (user_id, gmail_message_id)` — unique index. Upload handler checks this table before uploading; if the email was already processed, marks the job done without re-uploading.
-- `Files.Create` with a parent and name will create a *new* folder even if one with the same name exists. The `EnsureFolder` list-first-then-create pattern prevents duplicates by returning the existing folder when present.
-- Drive file names are deterministic (`email.pdf` + sanitized attachment names). A double-upload from the same job would overwrite itself.
+- Enqueue-time: the partial unique index on `pipeline_jobs (user_id, gmail_message_id)` (§5.6) rejects a second in-flight job for the same email before it ever reaches a worker.
+- `Files.Create` with a parent and name will create a *new* file even if one with the same name exists — Drive does not dedupe on create. Both `EnsureFolder` and `Upload` (§5.11) work around this the same way: list by name + parent first, and return the existing ID instead of creating when a match is found.
+- Drive file names are deterministic (`email.pdf` + sanitized attachment names), so the list-before-create query always matches a prior upload of the same email.
+
+`processed_emails (user_id, gmail_message_id)` exists in the schema (§5.6) but nothing currently writes to it — the two mechanisms above are what actually prevent duplicates.
 
 **What breaks it:** Renaming `02_GmailBackup` mid-session would cause the folder cache to point at a stale ID; EnsureFolder would create a new one with the original name. Minor inconvenience, not data loss.
 

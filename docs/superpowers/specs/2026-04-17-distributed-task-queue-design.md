@@ -118,7 +118,7 @@ Build a distributed task queue (Go, Redis, Postgres, Docker, k3s, GitHub Actions
 
    Workers heartbeat for their whole process lifetime — `heartbeat:<worker_id>` written every 5 s with TTL 15 s, starting before the first pop — not per job. A worker that dies at any point after the pop leaves the job ID in its processing list until the ack; once its heartbeat expires the sweeper moves the entry back to the stage queue.
 3. **Render worker:** Same claim+heartbeat pattern. Reads MIME, parses headers + HTML body, posts to Gotenberg `/forms/chromium/convert/html`, writes resulting PDF to `/data/pdf/<job_id>.pdf`. Extracts attachments from MIME, writes to `/data/attachments/<job_id>/`. Hands off to `queue:upload`.
-4. **Upload worker:** Reads PDF + attachments. Resolves Drive folder path `<root>/YYYY/MM/DD/<email-folder>/` (creates folders idempotently via Drive API, caches folder IDs in Redis). Uploads PDF and each attachment. On success, sets `pipeline_jobs.status='done', completed_at=now()`. Inserts into `processed_emails (user_id, gmail_message_id)`. GC'd from disk by retention sweep.
+4. **Upload worker:** Reads PDF + attachments. Resolves Drive folder path `<root>/YYYY/MM/DD/<email-folder>/` (creates folders idempotently via Drive API, caches folder IDs in Redis). Uploads PDF and each attachment idempotently — lists by name + parent before creating, so a retried upload returns the existing file's ID instead of duplicating it. On success, sets `pipeline_jobs.status='done', completed_at=now()`. GC'd from disk by retention sweep.
 5. **At any stage, if the worker crashes:** Heartbeat TTL expires. If the job was claimed (`status='running'`), the sweeper increments `attempts`, schedules requeue for `now() + backoff(attempts)`, sets `status='queued'`. If the worker died between pop and claim, the job ID is still in `processing:<stage>:<worker_id>`; the sweeper moves it back to `queue:<stage>`. Both paths can push a duplicate ID; the conditional claim absorbs it.
 
 ### Operator-invoked historical backfill
@@ -211,7 +211,9 @@ CREATE TABLE job_status_history (
 );
 CREATE INDEX ON job_status_history (job_id, at);
 
--- Idempotency. Prevents duplicate Drive uploads if a job runs twice.
+-- Present in the schema, but nothing writes to it yet. Duplicate Drive uploads
+-- are actually prevented by the enqueue-time unique index above plus
+-- find-before-create uploads (§7 Idempotency).
 CREATE TABLE processed_emails (
   user_id           UUID NOT NULL REFERENCES users(id),
   gmail_message_id  TEXT NOT NULL,
@@ -308,9 +310,9 @@ The dashboard's demo buttons are public. The defenses below assume a determined 
 
 ### Idempotency
 
-- **Within the queue**: claim is keyed by Postgres `id`. The same job can run twice (at-least-once), but the upload worker checks `processed_emails` before doing the Drive write. If already processed, it skips and marks done.
+- **Within the queue**: claim is keyed by Postgres `id`. The same job can run twice (at-least-once); the upload worker's find-before-create check (below) is what keeps a re-run from duplicating the Drive write.
 - **At enqueue time**: scheduler uses Gmail `historyId` cursor; doesn't re-enqueue a message it has already enqueued because the cursor advances after each tick. Belt-and-suspenders: `pipeline_jobs` has a partial unique index on `(user_id, gmail_message_id)` for non-terminal, non-synthetic rows (see schema).
-- **At Drive upload**: file existence check by name in the target folder before upload. Drive's resumable upload API also supports content hash dedup.
+- **At Drive upload**: file existence check by name in the target folder before upload (same query shape as folder `EnsureFolder`) — a retried upload returns the existing file's ID instead of creating a duplicate.
 
 ### What "at-least-once" means here
 

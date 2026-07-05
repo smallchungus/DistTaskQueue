@@ -74,6 +74,15 @@ func (c *Client) EnsureFolder(ctx context.Context, parentID, name string) (strin
 }
 
 func (c *Client) Upload(ctx context.Context, parentID, name, contentType string, content []byte) (string, error) {
+	q := fmt.Sprintf("name = '%s' and '%s' in parents and trashed = false", escape(name), parentID)
+	resp, err := c.svc.Files.List().Q(q).Fields("files(id,name)").Context(ctx).Do()
+	if err != nil {
+		return "", fmt.Errorf("list files: %w", err)
+	}
+	if len(resp.Files) > 0 {
+		return resp.Files[0].Id, nil
+	}
+
 	created, err := c.svc.Files.Create(&driveapi.File{
 		Name:    name,
 		Parents: []string{parentID},
