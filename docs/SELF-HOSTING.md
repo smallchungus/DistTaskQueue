@@ -93,8 +93,8 @@ worker-upload` is the first place to look.
 
 The scheduler only forward-syncs new mail — it never backfills on its own,
 so day one only picks up whatever arrives after you connect the account.
-To pull in everything already in the inbox, run the one-shot backfill
-command:
+To pull in your existing personal mail, including anything archived out of
+the inbox, run the one-shot backfill command:
 
 ```bash
 docker compose run backfill --email=you@example.com --since=2020-01-01

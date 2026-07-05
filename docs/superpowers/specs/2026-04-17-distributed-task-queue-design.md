@@ -128,6 +128,9 @@ burn the account's Gmail quota to backfill automatically on first sync.
 Importing an existing inbox is instead a deliberate, one-shot action the
 operator runs by hand (`cmd/backfill`):
 
+- Filters on `CATEGORY_PERSONAL` only, not `INBOX` — archived mail has no
+  `INBOX` label, and reaching it is the point of backfill; the scheduler's
+  forward sync stays `INBOX`-scoped because new arrivals are always there.
 - Pages `users.messages.list` for a date range, and enqueues a `fetch` job
   per message ID on each page using the same idempotency check the
   scheduler uses (`HasJobForMessage` before `EnqueueJob` + queue push) — a

@@ -138,10 +138,12 @@ func (c *Client) ListRecent(ctx context.Context, since time.Time) ([]string, err
 	}
 }
 
-// ListAllPages pages through INBOX/Primary message IDs between since and
-// before, calling page once per page in order. A zero since or before omits
-// that half of the date range from the query. Used by the operator-invoked
-// backfill command; ListRecent above covers the scheduler's own safety net.
+// ListAllPages pages through CATEGORY_PERSONAL message IDs between since and
+// before, calling page once per page in order. Unlike the scheduler's
+// INBOX-scoped forward sync, backfill reaches archived mail too, so it
+// filters on CATEGORY_PERSONAL only. A zero since or before omits that half
+// of the date range from the query. Used by the operator-invoked backfill
+// command; ListRecent above covers the scheduler's own safety net.
 func (c *Client) ListAllPages(ctx context.Context, since, before time.Time, page func(ids []string) error) error {
 	var parts []string
 	if !since.IsZero() {
@@ -155,7 +157,7 @@ func (c *Client) ListAllPages(ctx context.Context, since, before time.Time, page
 	var pageToken string
 	for {
 		call := c.svc.Users.Messages.List("me").
-			LabelIds("INBOX", "CATEGORY_PERSONAL").
+			LabelIds("CATEGORY_PERSONAL").
 			Context(ctx)
 		if query != "" {
 			call = call.Q(query)

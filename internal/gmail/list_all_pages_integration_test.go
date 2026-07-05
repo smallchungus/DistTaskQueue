@@ -83,6 +83,27 @@ func TestListAllPages_DeliversPagesInOrder(t *testing.T) {
 	}
 }
 
+func TestListAllPages_FiltersCategoryPersonalOnly(t *testing.T) {
+	var capturedQuery string
+	c := setupListAllPagesClient(t, func(w http.ResponseWriter, r *http.Request) {
+		capturedQuery = r.URL.RawQuery
+		w.Header().Set("Content-Type", "application/json")
+		_, _ = w.Write([]byte(`{"messages":[]}`))
+	})
+
+	if err := c.ListAllPages(context.Background(), time.Time{}, time.Time{}, func(ids []string) error { return nil }); err != nil {
+		t.Fatalf("list all pages: %v", err)
+	}
+
+	if !containsAll(capturedQuery, "CATEGORY_PERSONAL") {
+		t.Fatalf("query missing CATEGORY_PERSONAL: %q", capturedQuery)
+	}
+	// Archived mail has no INBOX label; scoping to it would defeat backfill's purpose.
+	if containsAll(capturedQuery, "INBOX") {
+		t.Fatalf("query must not scope to INBOX: %q", capturedQuery)
+	}
+}
+
 func TestListAllPages_QueryOmitsZeroTimes(t *testing.T) {
 	tests := []struct {
 		name   string
