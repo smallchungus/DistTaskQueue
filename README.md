@@ -21,26 +21,36 @@ Docs: [SELF-HOSTING.md](docs/SELF-HOSTING.md) (run it yourself), [ARCHITECTURE.m
 
 ## Quickstart
 
-Want the real Gmail → Drive pipeline running on your own machine? See
-**[docs/SELF-HOSTING.md](docs/SELF-HOSTING.md)** — one `docker compose up`,
-a Google Cloud OAuth client, about 10 minutes.
-
-For contributors hacking on the API/dashboard without the Gmail/Drive
-pipeline, no Google credentials or `.env` needed — just build and run the
-`api` service; Compose brings up Postgres and Redis as its dependencies,
-and nothing pulls the private GHCR image:
+No clone required — two files:
 
 ```bash
-docker compose up --build api
+curl -O https://raw.githubusercontent.com/smallchungus/DistTaskQueue/main/docker-compose.yaml
+curl -o .env https://raw.githubusercontent.com/smallchungus/DistTaskQueue/main/.env.example
+# edit .env: Google OAuth client id/secret, TOKEN_ENCRYPTION_KEY
+docker compose up -d
+```
+
+See **[docs/SELF-HOSTING.md](docs/SELF-HOSTING.md)** for the full
+walkthrough — Google Cloud OAuth setup, verifying the pipeline, backfilling
+existing mail. About 10 minutes, most of it clicking through Google Cloud
+Console.
+
+For contributors hacking on the API/dashboard without the Gmail/Drive
+pipeline: clone the repo and build from source with the
+`docker-compose.build.yaml` override, no Google credentials or `.env`
+needed — Compose brings up Postgres and Redis as `api`'s dependencies:
+
+```bash
+docker compose -f docker-compose.yaml -f docker-compose.build.yaml up --build api
 curl localhost:8080/healthz
 curl localhost:8080/version
 docker compose down -v
 ```
 
-`make docker-up` starts the full nine-service stack (workers, scheduler,
-sweeper, Gotenberg) and pulls `ghcr.io/smallchungus/disttaskqueue-api` for
-the services this repo doesn't build locally — see
-[SELF-HOSTING.md](docs/SELF-HOSTING.md) for that path.
+`make docker-up` builds and starts the full nine-service stack (workers,
+scheduler, sweeper, Gotenberg) from source — see
+[SELF-HOSTING.md](docs/SELF-HOSTING.md) for running from the published
+image instead.
 
 Run the API directly without Docker:
 

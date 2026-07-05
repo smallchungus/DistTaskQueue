@@ -1,0 +1,56 @@
+services:
+  api:
+    build:
+      context: .
+      args:
+        VERSION: dev
+        COMMIT: local
+
+  worker-fetch:
+    build:
+      context: .
+      args:
+        VERSION: dev
+        COMMIT: local
+
+  worker-render:
+    build:
+      context: .
+      args:
+        VERSION: dev
+        COMMIT: local
+
+  worker-upload:
+    build:
+      context: .
+      args:
+        VERSION: dev
+        COMMIT: local
+
+  scheduler:
+    build:
+      context: .
+      args:
+        VERSION: dev
+        COMMIT: local
+
+  sweeper:
+    build:
+      context: .
+      args:
+        VERSION: dev
+        COMMIT: local
+
+  oauth-setup:
+    build:
+      context: .
+      args:
+        VERSION: dev
+        COMMIT: local
+
+  backfill:
+    build:
+      context: .
+      args:
+        VERSION: dev
+        COMMIT: local

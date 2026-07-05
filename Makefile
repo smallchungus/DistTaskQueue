@@ -29,8 +29,8 @@ run: ## Run the api binary locally
 docker: ## Build the api Docker image
 	docker build -t disttaskqueue/api:dev .
 
-docker-up: ## Start full local stack (all services; copy .env.example to .env first for Gmail/Drive)
-	docker compose up --build
+docker-up: ## Build from source and start full local stack (copy .env.example to .env first for Gmail/Drive)
+	docker compose -f docker-compose.yaml -f docker-compose.build.yaml up --build
 
 docker-down: ## Stop local dev stack
 	docker compose down -v

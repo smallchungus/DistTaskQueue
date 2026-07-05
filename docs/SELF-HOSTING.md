@@ -5,7 +5,16 @@ Compose. About 10 minutes, most of it clicking through Google Cloud Console.
 
 Prereqs: Docker, Docker Compose v2.24+ (required for optional `env_file` support).
 
-## 1. Google Cloud setup
+## 1. Download the compose file and env template
+
+No git clone needed — two files:
+
+```bash
+curl -O https://raw.githubusercontent.com/smallchungus/DistTaskQueue/main/docker-compose.yaml
+curl -o .env https://raw.githubusercontent.com/smallchungus/DistTaskQueue/main/.env.example
+```
+
+## 2. Google Cloud setup
 
 The pipeline reads Gmail via the Gmail API and writes PDFs to Drive via the
 Drive API, both under an OAuth 2.0 client you own.
@@ -27,15 +36,11 @@ Drive API, both under an OAuth 2.0 client you own.
    `http://localhost:8888/callback` as an authorized redirect URI. Note the
    client ID and secret — you'll need both in the next step.
 
-## 2. Configure
+## 3. Configure
 
-```bash
-cp .env.example .env
-```
+Edit the `.env` you downloaded in step 1:
 
-Edit `.env`:
-
-- `GOOGLE_OAUTH_CLIENT_ID` / `GOOGLE_OAUTH_CLIENT_SECRET` — from step 1.
+- `GOOGLE_OAUTH_CLIENT_ID` / `GOOGLE_OAUTH_CLIENT_SECRET` — from step 2.
 - `TOKEN_ENCRYPTION_KEY` — generate with `openssl rand -base64 32`.
 - `DRIVE_ROOT_PATH` (optional) — slash-delimited folder path under which
   dated backup folders are created, e.g. `02_GmailBackup/Gmail Backup`.
@@ -45,18 +50,17 @@ Leave `DATABASE_URL` and `REDIS_URL` as-is — Compose points every service at
 the `postgres` and `redis` containers directly; those two entries in `.env`
 only matter if you run a binary outside Compose.
 
-## 3. Pinning a version (optional)
+## 4. Pinning a version (optional)
 
 By default, Compose pulls `disttaskqueue-api:latest`. For production, pin to a
 released version from the [releases page](https://github.com/smallchungus/DistTaskQueue/releases).
 Edit `docker-compose.yaml` and replace all occurrences of `:latest` with the
 version tag, e.g., `:v0.1.0`.
 
-If no published image works for your platform, each of those services has a
-commented-out `build:` block in `docker-compose.yaml` — uncomment it (and
-comment out `image:`) to build from source instead.
+If no published image works for your platform, see **Build from source /
+develop** at the bottom of this doc.
 
-## 4. Bring up the stack
+## 5. Bring up the stack
 
 ```bash
 docker compose up -d
@@ -71,7 +75,7 @@ docker compose ps
 curl localhost:8080/healthz
 ```
 
-## 5. Authorize your Google account
+## 6. Authorize your Google account
 
 Run the one-off OAuth bootstrap. It opens a local callback server on
 `:8888` and prints a URL to open in your browser:
@@ -84,7 +88,7 @@ Open the printed URL, sign in, authorize. The terminal prints "Token saved"
 once the callback completes. The scheduler starts syncing that account on
 its next poll (every 60 s).
 
-## 6. Verify it works
+## 7. Verify it works
 
 Send yourself an email. Within about 2 minutes it should show up as a PDF
 in your Drive, under a dated folder tree:
@@ -93,7 +97,7 @@ in your Drive, under a dated folder tree:
 If it doesn't, `docker compose logs -f scheduler worker-fetch worker-render
 worker-upload` is the first place to look.
 
-## 7. Back up your existing mail
+## 8. Back up your existing mail
 
 The scheduler only forward-syncs new mail — it never backfills on its own,
 so day one only picks up whatever arrives after you connect the account.
@@ -125,7 +129,7 @@ skipped on the next pass.
 
 | Symptom | Cause | Fix |
 |---|---|---|
-| Scheduler logs `invalid_grant` repeatedly | OAuth consent screen still in Testing mode — refresh tokens expire after 7 days | Publish the app to production (step 1.3), then re-run `oauth-setup` |
+| Scheduler logs `invalid_grant` repeatedly | OAuth consent screen still in Testing mode — refresh tokens expire after 7 days | Publish the app to production (step 2.3), then re-run `oauth-setup` |
 | Emails sync but the Drive folder is empty or in the wrong place | `DRIVE_ROOT_PATH` / `DRIVE_ROOT_FOLDER_ID` unset or pointing elsewhere | Set `DRIVE_ROOT_PATH` in `.env`, restart the upload worker: `docker compose restart worker-upload` |
 | `docker compose up` fails with "port is already allocated" | Something else on your machine already uses 5432, 6379, 3000, 8080, or 8888 | Stop the conflicting process, or remap the host side of the port in `docker-compose.yaml`, e.g. `"15432:5432"` |
 | A binary exits immediately with `missing env var: FOO` | `.env` is missing a required value | Fill in the var it names — this is fail-fast by design, not a bug |
@@ -135,3 +139,20 @@ skipped on the next pass.
 Docker Compose is the fast path for a single machine. For autoscaling,
 TLS, backups, and metrics, see the Kubernetes deployment under
 `deploy/k8s/` and the runbooks in [OPERATIONS.md](./OPERATIONS.md).
+
+## Build from source / develop
+
+Prefer to build the images yourself, or want to hack on the code? Clone
+the repo instead of downloading the two files, and use the
+`docker-compose.build.yaml` override to build every service from source:
+
+```bash
+git clone https://github.com/smallchungus/DistTaskQueue
+cd DistTaskQueue
+cp .env.example .env   # edit as in step 3 above
+docker compose -f docker-compose.yaml -f docker-compose.build.yaml up --build -d
+```
+
+`make docker-up` runs the same command. Everything else in this doc —
+Google Cloud setup, `oauth-setup`, `backfill` — works identically; only
+how the images get built changes.

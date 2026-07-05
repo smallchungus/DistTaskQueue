@@ -33,11 +33,12 @@ services:
       - "3000:3000"
 
   api:
-    build:
-      context: .
-      args:
-        VERSION: dev
-        COMMIT: local
+    image: ghcr.io/smallchungus/disttaskqueue-api:latest
+    # build:
+    #   context: .
+    #   args:
+    #     VERSION: dev
+    #     COMMIT: local
     env_file:
       - path: .env
         required: false
