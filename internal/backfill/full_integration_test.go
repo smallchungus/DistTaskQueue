@@ -123,7 +123,7 @@ func TestRunFull_SecondRunSkipsEverything(t *testing.T) {
 	}
 
 	var doneJobID uuid.UUID
-	if err := s.PoolForTest().QueryRow(ctx, //nolint:gosec
+	if err := s.PoolForTest().QueryRow(ctx,
 		`SELECT id FROM pipeline_jobs WHERE user_id = $1 AND gmail_message_id = $2`,
 		u.ID, "s1",
 	).Scan(&doneJobID); err != nil {

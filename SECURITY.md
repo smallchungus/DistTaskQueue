@@ -23,7 +23,7 @@ Security reports will be acknowledged within 48 hours and are subject to a 90-da
 DistTaskQueue is designed for **single-operator self-hosting**: you host your own data and control the server. Threat assumptions:
 
 - **Trusted operator**: The person or organization running the cluster has legitimate access to all data flowing through it.
-- **Untrusted network**: The cluster may be exposed to the internet via HTTPS (TLS termination at the edge or via cert-manager). The API surface (dashboard, metrics, HTTP endpoints) accepts only authenticated requests via OAuth tokens stored in the database.
+- **Untrusted network**: The cluster may be exposed to the internet via HTTPS (TLS termination at the edge or via cert-manager). The HTTP API has **no inbound authentication**: the dashboard, `/metrics`, `/api/stats`, and `/api/jobs/recent` are fully public with no rate limiting either; the `/api/demo/*` endpoints add per-IP rate limiting but remain unauthenticated. Do not expose port 8080 to an untrusted network without putting a reverse proxy in front that adds authentication. The OAuth tokens stored in the database are outbound credentials for the Gmail/Drive APIs; they do not gate access to DistTaskQueue's own API.
 - **Shared infrastructure not in scope**: DistTaskQueue does not protect against a co-tenant or malicious cloud provider accessing the hypervisor or block storage. Use encrypted block storage (EBS encryption, GCP Persistent Disk encryption) if you require that assurance.
 
 ### What DistTaskQueue Does NOT Provide
@@ -31,13 +31,13 @@ DistTaskQueue is designed for **single-operator self-hosting**: you host your ow
 - **Multi-tenancy**: There is no isolation between users within a single deployment. The sweeper, scheduler, and workers are cooperative and assume honest clients.
 - **Audit logging**: Actions are logged to stderr/stdout; there is no centralized immutable audit trail. Add a sidecar (Stackdriver, DataDog, etc.) if your compliance regime requires it.
 - **Encryption in transit for internal communication**: Pod-to-pod and pod-to-database traffic is unencrypted within the Kubernetes cluster. Enable mTLS (Linkerd, Istio) or run on a private network if you require that.
-- **Rate limiting or DoS protection**: The API has no built-in rate limiting. Deploy a WAF or API gateway (Traefik, ngrok, Cloudflare) if exposed to untrusted networks.
+- **Rate limiting or DoS protection**: The `/api/demo/*` endpoints have a per-IP token bucket; everything else has none. Deploy a WAF or API gateway (Traefik, ngrok, Cloudflare) if exposed to untrusted networks.
 
 ### Dependency Security
 
-This project uses vendored dependencies and expects you to:
+This project uses a standard `go.mod`/`go.sum` (no vendored copies) and expects you to:
 
-1. Pin container images by digest (not `latest` tag) in your Kubernetes manifests.
+1. Pin container images to a released version tag (not `latest`) in your manifests; pin by digest instead if you need reproducibility guarantees stronger than a tag.
 2. Regularly rebuild and redeploy to pick up security fixes in transitive Go dependencies.
 3. Monitor the project's GitHub releases for security advisories and apply them promptly.
 

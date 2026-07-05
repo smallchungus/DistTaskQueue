@@ -19,14 +19,21 @@ Want the real Gmail → Drive pipeline running on your own machine? See
 a Google Cloud OAuth client, about 10 minutes.
 
 For contributors hacking on the API/dashboard without the Gmail/Drive
-pipeline, a lighter local stack (api + postgres + redis) is enough:
+pipeline, no Google credentials or `.env` needed — just build and run the
+`api` service; Compose brings up Postgres and Redis as its dependencies,
+and nothing pulls the private GHCR image:
 
 ```bash
-make docker-up        # brings up api + postgres + redis on docker compose
+docker compose up --build api
 curl localhost:8080/healthz
 curl localhost:8080/version
-make docker-down
+docker compose down -v
 ```
+
+`make docker-up` starts the full nine-service stack (workers, scheduler,
+sweeper, Gotenberg) and pulls `ghcr.io/smallchungus/disttaskqueue-api` for
+the services this repo doesn't build locally — see
+[SELF-HOSTING.md](docs/SELF-HOSTING.md) for that path.
 
 Run the API directly without Docker:
 

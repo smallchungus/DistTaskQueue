@@ -52,6 +52,10 @@ released version from the [releases page](https://github.com/smallchungus/DistTa
 Edit `docker-compose.yaml` and replace all occurrences of `:latest` with the
 version tag, e.g., `:v0.1.0`.
 
+If no published image works for your platform, each of those services has a
+commented-out `build:` block in `docker-compose.yaml` — uncomment it (and
+comment out `image:`) to build from source instead.
+
 ## 4. Bring up the stack
 
 ```bash
@@ -73,7 +77,7 @@ Run the one-off OAuth bootstrap. It opens a local callback server on
 `:8888` and prints a URL to open in your browser:
 
 ```bash
-docker compose run --service-ports oauth-setup --email=you@example.com
+docker compose run --rm --service-ports oauth-setup --email=you@example.com
 ```
 
 Open the printed URL, sign in, authorize. The terminal prints "Token saved"
@@ -89,7 +93,7 @@ in your Drive, under a dated folder tree:
 If it doesn't, `docker compose logs -f scheduler worker-fetch worker-render
 worker-upload` is the first place to look.
 
-## 7. Back up your existing inbox
+## 7. Back up your existing mail
 
 The scheduler only forward-syncs new mail — it never backfills on its own,
 so day one only picks up whatever arrives after you connect the account.
@@ -97,7 +101,7 @@ To pull in your existing personal mail, including anything archived out of
 the inbox, run the one-shot backfill command:
 
 ```bash
-docker compose run backfill --email=you@example.com --since=2020-01-01
+docker compose run --rm backfill --email=you@example.com --since=2020-01-01
 ```
 
 `--since` and `--before` take `YYYY-MM-DD` dates and are both optional;
