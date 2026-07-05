@@ -1,8 +1,15 @@
 # DistTaskQueue
 
 [![ci](https://github.com/smallchungus/DistTaskQueue/actions/workflows/ci.yml/badge.svg)](https://github.com/smallchungus/DistTaskQueue/actions/workflows/ci.yml)
+[![release](https://img.shields.io/github/v/release/smallchungus/DistTaskQueue?sort=semver)](https://github.com/smallchungus/DistTaskQueue/releases)
+[![Go Report Card](https://goreportcard.com/badge/github.com/smallchungus/disttaskqueue)](https://goreportcard.com/report/github.com/smallchungus/disttaskqueue)
+[![license](https://img.shields.io/github/license/smallchungus/DistTaskQueue)](LICENSE)
 
-A distributed task queue in Go (Redis + Postgres + Kubernetes), built to power a continuous Gmail → PDF → Google Drive sync. A hand-rolled cloudhq replacement, and a portfolio piece demonstrating multi-stage pipelines, heartbeat-based failure recovery, autoscaling on queue depth, and at-least-once delivery with idempotent side effects.
+Self-hosted backup of your Gmail to your Google Drive. Every email is rendered to a PDF and filed into a dated Drive folder with its attachments, so your mail survives any single account. It runs on a hand-rolled distributed task queue in Go (raw Redis + Postgres, no queue library) — the kind of system you would normally reach for Celery or SQS to build.
+
+![Live dashboard](docs/img/dashboard.png)
+
+**[Try the live dashboard](https://dtq.willchennn.com/)** — press Flood and watch 1,000 jobs drain while the workers autoscale. **[Run it yourself in 10 minutes](docs/SELF-HOSTING.md).**
 
 ## Status
 
