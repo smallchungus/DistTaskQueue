@@ -4,13 +4,13 @@ Global rules in `~/.claude/CLAUDE.md` still apply. This file adds project-specif
 
 ## Read first
 
-- Design spec: `docs/superpowers/specs/2026-04-17-distributed-task-queue-design.md`
-- Implementation plan(s): `docs/superpowers/plans/` (created when work starts)
-- Don't deviate from the spec without flagging it. If the spec is wrong, fix the spec first, then the code.
+- Design and rationale: `docs/ARCHITECTURE.md` — what each component does, why, and the rejected alternatives.
+- Runbooks: `docs/OPERATIONS.md`. Self-host walkthrough: `docs/SELF-HOSTING.md`.
+- Don't deviate from the documented design without flagging it. If the doc is wrong, fix the doc first, then the code.
 
 ## TDD is non-negotiable
 
-- Tests come before implementation. Red → green → refactor. Use the `superpowers:test-driven-development` skill.
+- Tests come before implementation. Red → green → refactor.
 - If a test is hard to write, the unit boundary is wrong. Split before adding more code.
 - Integration tests use real Redis and real Postgres via `testcontainers-go`. Do NOT mock SQL drivers or `go-redis`. Mocks here have caused outages elsewhere; we're not repeating that.
 - Mock only at outbound HTTP boundaries: Gmail API, Drive API, Gotenberg. Use `httptest.Server` with canned responses, not interface mocks.
@@ -84,7 +84,7 @@ internal/
   testutil/    # testcontainers helpers (one place; not duplicated per package)
 deploy/k8s/    # k3s manifests
 .github/workflows/
-docs/superpowers/
+docs/          # ARCHITECTURE, OPERATIONS, SELF-HOSTING, WAR-STORIES, DEMO
 ```
 
 Worker is one binary with a `--stage` flag because the three stages share heartbeat + claim + retry plumbing. Same image, three deployments.

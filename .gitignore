@@ -62,3 +62,9 @@ appendonly.aof
 # local tool indexes and settings
 .claude/
 .codegraph/
+
+# gitnexus-generated agent context (not committed to OSS)
+AGENTS.md
+
+# internal AI-workflow planning docs
+docs/superpowers/

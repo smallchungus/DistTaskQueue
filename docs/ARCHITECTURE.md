@@ -620,6 +620,6 @@ Every one of these is a place I'd change my mind for a different project.
 Reading order for someone wanting to operate this:
 
 1. [README.md](../README.md) — how to run it locally.
-2. [OPERATIONS.md](./OPERATIONS.md) — runbooks: cloud swap, scale up, incident response.
-3. `docs/superpowers/specs/2026-04-17-distributed-task-queue-design.md` — the original design doc (spec-ish).
-4. `docs/superpowers/plans/*.md` — per-phase implementation plans (history of how each chunk was built).
+2. [SELF-HOSTING.md](./SELF-HOSTING.md) — the 10-minute self-host walkthrough.
+3. [OPERATIONS.md](./OPERATIONS.md) — runbooks: cloud swap, scale up, incident response.
+4. [WAR-STORIES.md](./WAR-STORIES.md) — the incidents behind the design decisions.
