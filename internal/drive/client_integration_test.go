@@ -233,3 +233,24 @@ func TestUpload_SameNameSameParentIsIdempotent(t *testing.T) {
 		t.Fatalf("got %d create calls, want 1", m.uploadHits)
 	}
 }
+
+func TestUpload_SameNameDifferentParentCreatesBoth(t *testing.T) {
+	m := &driveMock{}
+	c := setupClient(t, m)
+
+	id1, err := c.Upload(context.Background(), "parent-a", "scan.pdf", "application/pdf", []byte("PDF-DATA"))
+	if err != nil {
+		t.Fatalf("first upload: %v", err)
+	}
+	id2, err := c.Upload(context.Background(), "parent-b", "scan.pdf", "application/pdf", []byte("PDF-DATA"))
+	if err != nil {
+		t.Fatalf("second upload: %v", err)
+	}
+
+	if id1 == id2 {
+		t.Fatalf("got same id %q for uploads to different parents, want distinct ids", id1)
+	}
+	if m.uploadHits != 2 {
+		t.Fatalf("got %d upload calls, want 2", m.uploadHits)
+	}
+}

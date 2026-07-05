@@ -43,7 +43,7 @@ Build a distributed task queue (Go, Redis, Postgres, Docker, k3s, GitHub Actions
 1. **Sync trigger:** Gmail History API polled every 5 min (simpler, ~5 min latency) vs. Gmail Pub/Sub push (real-time, requires public webhook + GCP Pub/Sub setup). **Recommendation:** polling for v1.
 2. **PDF rendering:** Gotenberg as a sidecar deployment (battle-tested, Chromium under the hood). **Recommendation:** Gotenberg.
 3. **Encryption of OAuth tokens at rest:** AES-GCM with key in k8s Secret. **Recommendation:** yes, even for single-user v1, because the tokens are valuable and the cost is small.
-4. **Idempotency:** Postgres table `processed_emails (user_id, gmail_message_id) UNIQUE`. Workers check before doing work; on Drive upload, also use a content hash to skip exact re-uploads. **Recommendation:** yes.
+4. **Idempotency:** Enforced by enqueue-time unique index on `(user_id, gmail_message_id)` for non-terminal rows, plus find-before-create on Drive uploads (list by name + parent before creating). `processed_emails` table exists in schema for future use; currently unwritten. **Recommendation:** yes.
 5. **Retention of raw MIME and rendered PDF on the persistent volume:** delete after successful Drive upload, vs. keep N days for debugging. **Recommendation:** keep 7 days, then GC.
 
 ## 3. Architecture
