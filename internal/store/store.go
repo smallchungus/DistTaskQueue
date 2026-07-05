@@ -9,6 +9,7 @@ import (
 
 	"github.com/google/uuid"
 	"github.com/jackc/pgx/v5"
+	"github.com/jackc/pgx/v5/pgconn"
 	"github.com/jackc/pgx/v5/pgxpool"
 )
 
@@ -21,6 +22,7 @@ func New(pool *pgxpool.Pool) *Store {
 }
 
 var ErrJobNotFound = errors.New("job not found")
+var ErrDuplicateJob = errors.New("job already exists for message")
 
 func (s *Store) EnqueueJob(ctx context.Context, nj NewJob) (Job, error) {
 	id := uuid.New()
@@ -41,6 +43,10 @@ func (s *Store) EnqueueJob(ctx context.Context, nj NewJob) (Job, error) {
 	if err := row.Scan(&j.ID, &j.UserID, &j.GmailMessageID, &j.Stage, &j.Status, &j.Payload, &j.IsSynthetic,
 		&j.WorkerID, &j.Attempts, &j.MaxAttempts, &j.LastError, &j.NextRunAt,
 		&j.ClaimedAt, &j.CompletedAt, &j.CreatedAt, &j.UpdatedAt); err != nil {
+		var pgErr *pgconn.PgError
+		if errors.As(err, &pgErr) && pgErr.Code == "23505" && pgErr.ConstraintName == "pipeline_jobs_user_message_unique" {
+			return Job{}, fmt.Errorf("enqueue: %w", ErrDuplicateJob)
+		}
 		return Job{}, fmt.Errorf("enqueue: %w", err)
 	}
 	return j, nil

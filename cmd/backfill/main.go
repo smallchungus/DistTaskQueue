@@ -16,6 +16,7 @@ package main
 import (
 	"context"
 	"encoding/base64"
+	"errors"
 	"flag"
 	"fmt"
 	"log/slog"
@@ -38,8 +39,8 @@ const dateFormat = "2006-01-02"
 
 func main() {
 	email := flag.String("email", "", "email address of the account to backfill (required)")
-	since := flag.String("since", "", "only messages after this date, YYYY-MM-DD (optional)")
-	before := flag.String("before", "", "only messages before this date, YYYY-MM-DD (optional)")
+	since := flag.String("since", "", "only messages after this date, YYYY-MM-DD (optional); Gmail search matches whole days, not exact timestamps")
+	before := flag.String("before", "", "only messages before this date, YYYY-MM-DD (optional); Gmail search matches whole days, not exact timestamps")
 	maxQueue := flag.Int64("max-queue", 500, "pause enqueueing while queue:fetch depth exceeds this")
 	flag.Parse()
 
@@ -114,6 +115,10 @@ func main() {
 		MaxQueueDepth: *maxQueue,
 	})
 	if err != nil {
+		if errors.Is(err, context.Canceled) {
+			slog.Info("backfill interrupted; safe to re-run", "enqueued", enqueued, "skipped", skipped)
+			os.Exit(0)
+		}
 		slog.Error("backfill run", "err", err)
 		os.Exit(1)
 	}

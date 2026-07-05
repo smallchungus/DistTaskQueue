@@ -51,6 +51,27 @@ func TestHasJobForMessage_DetectsExistingAndMissingMessages(t *testing.T) {
 	}
 }
 
+func TestEnqueueJob_DuplicateMessageReturnsErrDuplicate(t *testing.T) {
+	s := newStore(t)
+	ctx := context.Background()
+
+	u, err := s.CreateUser(ctx, "dupe@example.com")
+	if err != nil {
+		t.Fatal(err)
+	}
+	msgID := "gmail-msg-dupe"
+	newJob := store.NewJob{Stage: "fetch", UserID: &u.ID, GmailMessageID: &msgID}
+
+	if _, err := s.EnqueueJob(ctx, newJob); err != nil {
+		t.Fatalf("first enqueue: %v", err)
+	}
+
+	_, err = s.EnqueueJob(ctx, newJob)
+	if !errors.Is(err, store.ErrDuplicateJob) {
+		t.Fatalf("got %v, want ErrDuplicateJob", err)
+	}
+}
+
 func TestEnqueueJob_PersistsRow(t *testing.T) {
 	s := newStore(t)
 	ctx := context.Background()

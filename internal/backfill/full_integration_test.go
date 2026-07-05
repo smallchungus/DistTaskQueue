@@ -11,6 +11,7 @@ import (
 	"testing"
 	"time"
 
+	"github.com/google/uuid"
 	"golang.org/x/oauth2"
 
 	"github.com/smallchungus/disttaskqueue/internal/backfill"
@@ -111,8 +112,9 @@ func TestRunFull_SecondRunSkipsEverything(t *testing.T) {
 	})
 	s, q, u, key, srv := setupFull(t, string(listResp))
 	cfg := fullConfig(s, q, u, key, srv)
+	ctx := context.Background()
 
-	enqueued, skipped, err := backfill.RunFull(context.Background(), cfg)
+	enqueued, skipped, err := backfill.RunFull(ctx, cfg)
 	if err != nil {
 		t.Fatalf("first run: %v", err)
 	}
@@ -120,7 +122,21 @@ func TestRunFull_SecondRunSkipsEverything(t *testing.T) {
 		t.Fatalf("first run enqueued=%d skipped=%d, want 3/0", enqueued, skipped)
 	}
 
-	enqueued, skipped, err = backfill.RunFull(context.Background(), cfg)
+	var doneJobID uuid.UUID
+	if err := s.PoolForTest().QueryRow(ctx, //nolint:gosec
+		`SELECT id FROM pipeline_jobs WHERE user_id = $1 AND gmail_message_id = $2`,
+		u.ID, "s1",
+	).Scan(&doneJobID); err != nil {
+		t.Fatal(err)
+	}
+	if err := s.ClaimJob(ctx, doneJobID, "worker-1"); err != nil {
+		t.Fatal(err)
+	}
+	if err := s.MarkDone(ctx, doneJobID); err != nil {
+		t.Fatal(err)
+	}
+
+	enqueued, skipped, err = backfill.RunFull(ctx, cfg)
 	if err != nil {
 		t.Fatalf("second run: %v", err)
 	}

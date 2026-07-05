@@ -101,7 +101,9 @@ docker compose run backfill --email=you@example.com --since=2020-01-01
 ```
 
 `--since` and `--before` take `YYYY-MM-DD` dates and are both optional;
-omit `--since` to go back to the start of the mailbox. It pages through
+omit `--since` to go back to the start of the mailbox. Gmail's search
+matches whole days in the account's local timezone, not exact timestamps,
+so messages right at a day boundary may land in either run. It pages through
 `messages.list`, enqueues a `fetch` job per message with the same
 idempotency check the scheduler uses, and pauses whenever `queue:fetch`
 gets more than 500 jobs deep (`--max-queue` to change the cap) so it can't

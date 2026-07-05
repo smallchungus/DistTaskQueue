@@ -3,6 +3,7 @@ package backfill
 import (
 	"context"
 	"encoding/json"
+	"errors"
 	"fmt"
 	"log/slog"
 	"time"
@@ -116,6 +117,9 @@ func enqueueOne(ctx context.Context, cfg FullConfig, userID uuid.UUID, msgID str
 		GmailMessageID: &gid,
 		Payload:        json.RawMessage(`{}`),
 	})
+	if errors.Is(err, store.ErrDuplicateJob) {
+		return false, nil
+	}
 	if err != nil {
 		return false, fmt.Errorf("enqueue %s: %w", msgID, err)
 	}
